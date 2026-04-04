@@ -140,28 +140,48 @@ class SelectableLabel(QLabel):
         self.is_selecting = False
         self.page_num = -1
         self.setStyleSheet('border: 1px solid #ccc; background-color: white;')
-        self.setMargin(5)
+        self.setMargin(0)
+
+    def _image_rect(self):
+        pix = self.pixmap()
+        if not pix:
+            return QRect()
+        contents = self.contentsRect()
+        x = contents.x() + max(0, (contents.width() - pix.width()) // 2)
+        y = contents.y() + max(0, (contents.height() - pix.height()) // 2)
+        return QRect(x, y, pix.width(), pix.height())
+
+    def _clamp_to_image(self, point):
+        image_rect = self._image_rect()
+        if image_rect.isNull():
+            return point
+        x = min(max(point.x(), image_rect.left()), image_rect.right())
+        y = min(max(point.y(), image_rect.top()), image_rect.bottom())
+        return QPoint(x, y)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.selection_start = event.pos()
-            self.selection_end = event.pos()
+            self.selection_start = self._clamp_to_image(event.pos())
+            self.selection_end = self.selection_start
             self.is_selecting = True
             self.update()
 
     def mouseMoveEvent(self, event):
         if self.is_selecting:
-            self.selection_end = event.pos()
+            self.selection_end = self._clamp_to_image(event.pos())
             self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
             self.is_selecting = False
+            image_rect = self._image_rect()
+            selection_rect = QRect(self.selection_start, self.selection_end).normalized().intersected(image_rect)
             parent = self.parent()
             while parent and not isinstance(parent, PDFViewer):
                 parent = parent.parent()
             if parent:
-                parent.on_selection_complete(self.page_num, QRect(self.selection_start, self.selection_end).normalized())
+                local_rect = selection_rect.translated(-image_rect.topLeft())
+                parent.on_selection_complete(self.page_num, local_rect)
             self.update()
 
     def paintEvent(self, event):
@@ -288,6 +308,13 @@ class PDFViewer(QScrollArea):
             }
         ''')
         self.vbox.addWidget(self.drop_label)
+
+        self.open_pdf_btn = QPushButton('PDF 선택')
+        self.open_pdf_btn.setObjectName('actionBtn')
+        self.open_pdf_btn.setFixedHeight(38)
+        self.open_pdf_btn.setMinimumWidth(140)
+        self.open_pdf_btn.clicked.connect(self.open_pdf_via_dialog)
+        self.vbox.addWidget(self.open_pdf_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         
         self.parent_tool = None  # Reference to parent tool for callback
 
@@ -298,6 +325,24 @@ class PDFViewer(QScrollArea):
             return True
         except Exception:
             return False
+
+    def update_loaded_pdf_label(self, pdf_path):
+        if not self.parent_tool:
+            return
+        if self == self.parent_tool.viewer1:
+            self.parent_tool.lbl_name1.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
+        elif self == self.parent_tool.viewer2:
+            self.parent_tool.lbl_name2.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
+
+    def open_pdf_via_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, 'PDF 파일 선택', '', 'PDF Files (*.pdf)')
+        if not file_path:
+            return
+        self.clear_all_data()
+        if self.load_pdf(file_path):
+            self.update_loaded_pdf_label(file_path)
+        else:
+            QMessageBox.warning(self, '오류', 'PDF 파일을 불러오지 못했습니다.')
     
     def set_parent_tool(self, parent_tool):
         """Set reference to parent tool for callback"""
@@ -352,12 +397,7 @@ class PDFViewer(QScrollArea):
                     
                     # Load PDF
                     if self.load_pdf(pdf_path):
-                        # Update parent tool label if available
-                        if self.parent_tool:
-                            if self == self.parent_tool.viewer1:
-                                self.parent_tool.lbl_name1.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
-                            elif self == self.parent_tool.viewer2:
-                                self.parent_tool.lbl_name2.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
+                        self.update_loaded_pdf_label(pdf_path)
                     
                     event.acceptProposedAction()
                     return
@@ -370,6 +410,8 @@ class PDFViewer(QScrollArea):
         # Hide drop label when PDF is loaded
         if hasattr(self, 'drop_label'):
             self.drop_label.hide()
+        if hasattr(self, 'open_pdf_btn'):
+            self.open_pdf_btn.hide()
         
         for lbl in self.page_labels:
             lbl.setParent(None)
@@ -653,6 +695,10 @@ class PDFViewer(QScrollArea):
             self.current_highlights.clear()
         for lbl in self.page_labels:
             lbl.clear_selection()
+        if hasattr(self, 'drop_label'):
+            self.drop_label.show()
+        if hasattr(self, 'open_pdf_btn'):
+            self.open_pdf_btn.show()
         self.refresh_highlights()
 
 
@@ -807,17 +853,32 @@ class PdfCompareWidget(QWidget):
             current_page1 = self.get_current_page(self.viewer1)
             current_page2 = self.get_current_page(self.viewer2)
             
-            # Clear comparison highlights only for current pages
-            if current_page1 is not None and current_page1 in self.viewer1.last_compared_area:
-                del self.viewer1.last_compared_area[current_page1]
-            if current_page2 is not None and current_page2 in self.viewer2.last_compared_area:
-                del self.viewer2.last_compared_area[current_page2]
-            
-            # Clear selection data only for current pages
-            if current_page1 is not None and hasattr(self.viewer1, 'char_data'):
-                self.viewer1.char_data.clear()
-            if current_page2 is not None and hasattr(self.viewer2, 'char_data'):
-                self.viewer2.char_data.clear()
+            def clear_viewer_current_page(viewer, current_page):
+                if current_page is None:
+                    return
+
+                if current_page in viewer.last_compared_area:
+                    del viewer.last_compared_area[current_page]
+
+                if current_page in viewer.word_highlights:
+                    del viewer.word_highlights[current_page]
+
+                if current_page in viewer.search_highlights:
+                    del viewer.search_highlights[current_page]
+
+                if hasattr(viewer, 'current_highlights') and current_page in viewer.current_highlights:
+                    del viewer.current_highlights[current_page]
+
+                if current_page < len(viewer.page_labels):
+                    viewer.page_labels[current_page].clear_selection()
+
+                if viewer.pending_selection_rect and viewer.pending_selection_rect[0] == current_page:
+                    viewer.pending_selection_rect = None
+                    viewer.char_data.clear()
+                    viewer.raw_text = ''
+
+            clear_viewer_current_page(self.viewer1, current_page1)
+            clear_viewer_current_page(self.viewer2, current_page2)
             
             # Refresh highlights to update display
             self.viewer1.refresh_highlights()
@@ -829,25 +890,29 @@ class PdfCompareWidget(QWidget):
     def get_current_page(self, viewer):
         if not viewer.page_labels:
             return None
-        
-        # Get the visible region of the scroll area
-        visible_rect = viewer.viewport().visibleRegion().boundingRect()
-        
-        # Find which page is most visible
-        max_visible_area = 0
+
+        viewport_height = viewer.viewport().height()
+        scroll_top = viewer.verticalScrollBar().value()
+        scroll_bottom = scroll_top + viewport_height
+
+        max_visible_height = -1
         current_page = None
-        
+        page_top = viewer.vbox.contentsMargins().top()
+
         for i, label in enumerate(viewer.page_labels):
-            label_rect = label.geometry()
-            if visible_rect.intersects(label_rect):
-                # Calculate visible area of this label
-                intersection = visible_rect.intersected(label_rect)
-                visible_area = intersection.width() * intersection.height()
-                
-                if visible_area > max_visible_area:
-                    max_visible_area = visible_area
-                    current_page = i
-        
+            label_top = page_top
+            label_bottom = label_top + label.height()
+
+            visible_top = max(scroll_top, label_top)
+            visible_bottom = min(scroll_bottom, label_bottom)
+            visible_height = max(0, visible_bottom - visible_top)
+
+            if visible_height > max_visible_height:
+                max_visible_height = visible_height
+                current_page = i
+
+            page_top = label_bottom + viewer.vbox.spacing()
+
         return current_page
 
     def run_comparison(self):

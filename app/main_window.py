@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, 
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, ENABLE_INTERNAL_REPORT, ENABLE_LICENSE_MENU, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
+from app.tools.pdf_header_footer_compare import HFCompareWidget
 from app.tools.pdf_compare import PdfCompareWidget
 
 
@@ -216,6 +217,14 @@ class MdiMainWindow(QMainWindow):
     def register_tools(self):
         tool_definitions = [
             {
+                'key': HFCompareWidget.tool_key,
+                'menu_title': '📄 PDF 출력물 비교',
+                'window_title': HFCompareWidget.window_title,
+                'factory': HFCompareWidget,
+                'singleton': HFCompareWidget.singleton,
+                'enabled': HFCompareWidget.enabled,
+            },
+            {
                 'key': PdfCompareWidget.tool_key,
                 'menu_title': '📄 PDF 지정 영역 비교',
                 'window_title': PdfCompareWidget.window_title,
@@ -302,15 +311,20 @@ class MdiMainWindow(QMainWindow):
         # Calculate size accounting for sidebar
         mdi_width = self.mdi_area.width()
         mdi_height = self.mdi_area.height()
-        window_width = min(1600, mdi_width - 50)  # Leave some margin
-        window_height = min(900, mdi_height - 50)  # Leave some margin
         
-        # Center the window in the available MDI area
-        x = max(0, (mdi_width - window_width) // 2)
-        y = max(0, (mdi_height - window_height) // 2)
-        
-        sub_window.setGeometry(x, y, window_width, window_height)
-        sub_window.show()
+        # Maximize within MDI area for pdf_compare and pdf_hf_compare tools
+        if tool_key in ['pdf_compare', 'pdf_hf_compare']:
+            sub_window.showMaximized()
+        else:
+            window_width = min(1600, mdi_width - 50)  # Leave some margin
+            window_height = min(900, mdi_height - 50)  # Leave some margin
+            
+            # Center the window in the available MDI area
+            x = max(0, (mdi_width - window_width) // 2)
+            y = max(0, (mdi_height - window_height) // 2)
+            
+            sub_window.setGeometry(x, y, window_width, window_height)
+            sub_window.show()
         self.mdi_area.setActiveSubWindow(sub_window)
         self.set_active_sidebar_button(tool_key)
 
