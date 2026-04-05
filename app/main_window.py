@@ -2,7 +2,7 @@ from functools import partial
  
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PyQt6.QtGui import QFont, QIcon, QPixmap
-from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMdiArea, QMdiSubWindow, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, ENABLE_INTERNAL_REPORT, ENABLE_LICENSE_MENU, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
@@ -54,6 +54,8 @@ class MdiMainWindow(QMainWindow):
         self.sidebar_width = self.sidebar_expanded_width
         self.sidebar_buttons = []
         self.tool_definitions = []
+        self.current_tool_widget = None
+        self.current_tool_key = None
 
         self.sidebar = self.create_sidebar()
         self.main_layout.addWidget(self.sidebar)
@@ -117,11 +119,11 @@ class MdiMainWindow(QMainWindow):
         self.header_bar = self.create_header_bar()
         right_panel_layout.addWidget(self.header_bar)
         
-        # MDI area
-        self.mdi_area = QMdiArea()
-        self.mdi_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.mdi_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        right_panel_layout.addWidget(self.mdi_area, 1)
+        # Tool container (replaces MDI area)
+        self.tool_container = QWidget()
+        self.tool_container_layout = QVBoxLayout(self.tool_container)
+        self.tool_container_layout.setContentsMargins(0, 0, 0, 0)
+        right_panel_layout.addWidget(self.tool_container, 1)
         
         return right_panel
 
@@ -288,62 +290,37 @@ class MdiMainWindow(QMainWindow):
                 return tool_definition
         return None
 
-    def find_subwindow_by_tool_key(self, tool_key):
-        for window in self.mdi_area.subWindowList():
-            if window.property('tool_key') == tool_key:
-                return window
-        return None
-
     def open_tool(self, tool_key):
         tool_definition = self.get_tool_definition(tool_key)
         if not tool_definition:
             QMessageBox.warning(self, '오류', '선택한 도구 정보를 찾을 수 없습니다.')
             return
-        if tool_definition['singleton']:
-            existing_window = self.find_subwindow_by_tool_key(tool_key)
-            if existing_window:
-                self.mdi_area.setActiveSubWindow(existing_window)
-                existing_window.showNormal()
-                existing_window.raise_()
-                self.set_active_sidebar_button(tool_key)
-                return
-
-        sub_window = QMdiSubWindow()
-        sub_window.setWidget(tool_definition['factory']())
-        sub_window.setWindowTitle(tool_definition['window_title'])
-        sub_window.setProperty('tool_key', tool_key)
-        ico_path = get_icon_path()
-        if ico_path:
-            sub_window.setWindowIcon(QIcon(ico_path))
-        self.mdi_area.addSubWindow(sub_window)
         
-        # Calculate size accounting for sidebar
-        mdi_width = self.mdi_area.width()
-        mdi_height = self.mdi_area.height()
+        # If the same tool is already active, do nothing
+        if self.current_tool_key == tool_key:
+            return
         
-        # Maximize within MDI area for pdf_compare and pdf_hf_compare tools
-        if tool_key in ['pdf_compare', 'pdf_hf_compare']:
-            sub_window.showMaximized()
-        else:
-            window_width = min(1600, mdi_width - 50)  # Leave some margin
-            window_height = min(900, mdi_height - 50)  # Leave some margin
-            
-            # Center the window in the available MDI area
-            x = max(0, (mdi_width - window_width) // 2)
-            y = max(0, (mdi_height - window_height) // 2)
-            
-            sub_window.setGeometry(x, y, window_width, window_height)
-            sub_window.show()
-        self.mdi_area.setActiveSubWindow(sub_window)
+        # Clear current tool if exists
+        if self.current_tool_widget:
+            self.tool_container_layout.removeWidget(self.current_tool_widget)
+            self.current_tool_widget.deleteLater()
+            self.current_tool_widget = None
+        
+        # Create and set new tool
+        new_tool = tool_definition['factory']()
+        self.current_tool_widget = new_tool
+        self.current_tool_key = tool_key
+        self.tool_container_layout.addWidget(new_tool)
+        
+        # Update header and sidebar
+        self.header_title.setText(tool_definition['window_title'])
         self.set_active_sidebar_button(tool_key)
 
     def show_legend_caution_for_active_tool(self):
         # Find the active PDF compare widget
-        active_window = self.mdi_area.activeSubWindow()
-        if active_window and active_window.property('tool_key') == 'pdf_compare':
-            widget = active_window.widget()
-            if hasattr(widget, 'show_legend_caution_dialog'):
-                widget.show_legend_caution_dialog()
+        if self.current_tool_key == 'pdf_compare' and self.current_tool_widget:
+            if hasattr(self.current_tool_widget, 'show_legend_caution_dialog'):
+                self.current_tool_widget.show_legend_caution_dialog()
 
     def show_info(self):
         dialog = QDialog(self)

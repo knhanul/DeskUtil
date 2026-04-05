@@ -122,10 +122,14 @@ try:
         QListWidgetItem,
         QMainWindow,
         QMessageBox,
+        QProgressBar,
         QPushButton,
         QScrollArea,
         QSizePolicy,
         QSplitter,
+        QTabWidget,
+        QTableWidget,
+        QTableWidgetItem,
         QTextEdit,
         QTreeView,
         QTreeWidget,
@@ -151,10 +155,14 @@ except ImportError:
         QListWidgetItem,
         QMainWindow,
         QMessageBox,
+        QProgressBar,
         QPushButton,
         QScrollArea,
         QSizePolicy,
         QSplitter,
+        QTabWidget,
+        QTableWidget,
+        QTableWidgetItem,
         QTextEdit,
         QTreeView,
         QTreeWidget,
@@ -603,12 +611,23 @@ class DocumentSearchMainWindow(QMainWindow):
         self.bottom_splitter.setHandleWidth(6)
 
         self.folder_panel = self._build_folder_panel()
+        self.search_panel = self._build_search_panel()
         self.conditions_panel = self._build_conditions_panel()
         self.result_panel = self._build_result_panel()
         self.preview_panel = self._build_preview_panel()
 
+        # 탭 컨테이너 생성: 검색 탭 + 조건 탭
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName('searchTabs')
+        self.tab_widget.addTab(self.search_panel, '🔍 검색')
+        self.tab_widget.addTab(self.conditions_panel, '⚙️ 조건')
+        self.tab_widget.setTabPosition(QTabWidget.TabPosition.North)
+        self.tab_widget.setDocumentMode(True)
+        self.tab_widget.setMovable(False)
+        self.tab_widget.setTabsClosable(False)
+
         self.top_splitter.addWidget(self.folder_panel)
-        self.top_splitter.addWidget(self.conditions_panel)
+        self.top_splitter.addWidget(self.tab_widget)
         self.bottom_splitter.addWidget(self.result_panel)
         self.bottom_splitter.addWidget(self.preview_panel)
 
@@ -619,6 +638,8 @@ class DocumentSearchMainWindow(QMainWindow):
 
         self.vertical_splitter.addWidget(self.top_splitter)
         self.vertical_splitter.addWidget(self.bottom_splitter)
+        self.vertical_splitter.setStretchFactor(0, 33)  # 상단 1/3
+        self.vertical_splitter.setStretchFactor(1, 67)  # 하단 2/3
         root.addWidget(self.vertical_splitter, 1)
 
         self._build_menu()
@@ -658,7 +679,75 @@ class DocumentSearchMainWindow(QMainWindow):
         self._populate_folder_tree()
         return panel
 
+    def _build_search_panel(self) -> QWidget:
+        """첫 번째 탭: 검색어 입력 + 검색 시작 버튼 + 진행 정보"""
+        panel = QFrame()
+        panel.setObjectName("panelCard")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        # 검색어 입력 영역
+        query_label = QLabel("검색어")
+        query_label.setObjectName("fieldLabel")
+        layout.addWidget(query_label)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("검색어를 입력하세요")
+        self.search_input.setClearButtonEnabled(True)
+        layout.addWidget(self.search_input)
+
+        # 검색 시작 버튼
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
+        self.search_button = QPushButton("🔍 검색 시작")
+        self.search_button.setObjectName('compareBtn')
+        self.search_button.setFixedHeight(42)
+        self.search_button.setMinimumWidth(120)
+
+        self.cancel_button = QPushButton("⏹ 취소")
+        self.cancel_button.setObjectName('resetBtn')
+        self.cancel_button.setFixedHeight(42)
+        self.cancel_button.setMinimumWidth(100)
+        self.cancel_button.setVisible(False)
+
+        controls.addWidget(self.search_button)
+        controls.addWidget(self.cancel_button)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        # 검색 진행 정보 (바 타입)
+        progress_frame = QFrame()
+        progress_frame.setObjectName("innerCard")
+        progress_layout = QVBoxLayout(progress_frame)
+        progress_layout.setContentsMargins(14, 12, 14, 12)
+        progress_layout.setSpacing(8)
+
+        self.progress_title = QLabel("검색 준비")
+        self.progress_title.setObjectName("fieldLabel")
+        progress_layout.addWidget(self.progress_title)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        progress_layout.addWidget(self.progress_bar)
+
+        self.progress_status = QLabel("폴더를 선택하고 검색어를 입력하세요.")
+        self.progress_status.setObjectName("metaLabel")
+        progress_layout.addWidget(self.progress_status)
+
+        self.progress_details = QLabel("")
+        self.progress_details.setObjectName("metaLabel")
+        self.progress_details.setWordWrap(True)
+        progress_layout.addWidget(self.progress_details)
+
+        layout.addWidget(progress_frame)
+        layout.addStretch()
+        return panel
+
     def _build_conditions_panel(self) -> QWidget:
+        """두 번째 탭: 검색 조건 (파일 타입, 스니펫 포함 등)"""
         panel = QFrame()
         panel.setObjectName("panelCard")
         layout = QVBoxLayout(panel)
@@ -668,14 +757,6 @@ class DocumentSearchMainWindow(QMainWindow):
         header = QLabel("검색 조건")
         header.setObjectName("sectionTitle")
         layout.addWidget(header)
-
-        query_label = QLabel("검색어")
-        query_label.setObjectName("fieldLabel")
-        layout.addWidget(query_label)
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("검색어를 입력하세요")
-        self.search_input.setClearButtonEnabled(True)
-        layout.addWidget(self.search_input)
 
         type_label = QLabel("문서 파일 선택")
         type_label.setObjectName("fieldLabel")
@@ -700,22 +781,6 @@ class DocumentSearchMainWindow(QMainWindow):
         self.include_snippet_checkbox.setChecked(True)
         layout.addWidget(self.include_snippet_checkbox)
 
-        controls = QHBoxLayout()
-        controls.setSpacing(10)
-        self.search_button = QPushButton("검색 시작")
-        self.search_button.setFixedHeight(38)
-        self.search_button.setMinimumWidth(96)
-
-        self.cancel_button = QPushButton("취소")
-        self.cancel_button.setFixedHeight(38)
-        self.cancel_button.setMinimumWidth(84)
-        self.cancel_button.setVisible(False)
-
-        controls.addWidget(self.search_button)
-        controls.addWidget(self.cancel_button)
-        controls.addStretch()
-        layout.addLayout(controls)
-
         self.conditions_summary_label = QLabel("모든 문서 형식이 검색 대상입니다.")
         self.conditions_summary_label.setObjectName("metaLabel")
         layout.addWidget(self.conditions_summary_label)
@@ -735,34 +800,37 @@ class DocumentSearchMainWindow(QMainWindow):
         header.setObjectName("sectionTitle")
         layout.addWidget(header)
 
-        header_card = QFrame()
-        header_card.setObjectName("resultHeaderCard")
-        header_grid = QGridLayout(header_card)
-        header_grid.setContentsMargins(10, 8, 10, 8)
-        header_grid.setHorizontalSpacing(12)
-        header_grid.setVerticalSpacing(0)
-        for col, text in enumerate(["경로", "종류", "크기", "생성일", "수정일"]):
-            label = QLabel(text)
-            label.setObjectName("resultHeaderLabel")
-            header_grid.addWidget(label, 0, col)
-        header_grid.setColumnStretch(0, 4)
-        layout.addWidget(header_card)
-
-        self.result_list = QListWidget()
-        self.result_list.setObjectName("resultList")
-        self.result_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.result_list.setUniformItemSizes(False)
-        self.result_list.setSpacing(8)
-        self.result_list.currentItemChanged.connect(self._handle_selection_changed)
-        layout.addWidget(self.result_list, 1)
+        # QTableWidget으로 교체
+        self.result_table = QTableWidget()
+        self.result_table.setColumnCount(5)
+        self.result_table.setHorizontalHeaderLabels(["파일명", "종류", "크기", "생성일", "경로"])
+        
+        # 행 번호 숨기기
+        self.result_table.verticalHeader().setVisible(False)
+        
+        # 테이블 속성 설정
+        self.result_table.setObjectName("resultTable")
+        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.result_table.setAlternatingRowColors(True)
+        
+        # 열 너비 정책 설정
+        header = self.result_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # 파일명 컬럼은 남는 공간 모두 차지
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 종류
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # 크기
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # 생성일
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 경로
+        
+        # 선택 변경 시그널 연결
+        self.result_table.itemSelectionChanged.connect(self._handle_table_selection_changed)
+        
+        layout.addWidget(self.result_table, 1)
 
         self.result_meta_label = QLabel("0개 문서")
         self.result_meta_label.setObjectName("metaLabel")
         layout.addWidget(self.result_meta_label)
-
-        self.status_label = QLabel("폴더를 선택하고 검색어를 입력하세요.")
-        self.status_label.setObjectName("metaLabel")
-        layout.addWidget(self.status_label)
         return panel
 
     def _build_preview_panel(self) -> QWidget:
@@ -802,7 +870,7 @@ class DocumentSearchMainWindow(QMainWindow):
         return panel
 
     def _load_dummy_results_for_test(self) -> None:
-        self.result_list.clear()
+        self.result_table.setRowCount(0)  # 테이블 초기화
         self._result_payloads.clear()
         dummy_rows = [
             {
@@ -1039,7 +1107,7 @@ class DocumentSearchMainWindow(QMainWindow):
         self.conditions_summary_label.setText('검색 대상 형식: ' + ', '.join(selected_labels) + f' | 스니펫: {snippet_mode}')
 
     def _start_search(self) -> None:
-        self.result_list.clear()
+        self.result_table.setRowCount(0)  # 테이블 초기화
         self._result_payloads.clear()
         self.result_meta_label.setText("0개 문서")
         self._clear_preview()
@@ -1071,7 +1139,15 @@ class DocumentSearchMainWindow(QMainWindow):
         self.search_button.setEnabled(False)
         self.folder_tree.setEnabled(False)
         self.cancel_button.setVisible(True)
-        self.status_label.setText(f"검색을 시작합니다... ({len(checked_folders)}개 폴더)")
+        
+        # 진행 바 초기화
+        self.progress_bar.setValue(0)
+        self.progress_title.setText("검색 시작")
+        self.progress_status.setText(f"{len(checked_folders)}개 폴더 검색 준비 중...")
+        self.progress_details.setText(f"검색어: '{query}' | 파일 형식: {', '.join([self.supported_file_types[ext] for ext in selected_extensions])}")
+        
+        # 현재 검색어 저장 (강조 표시용)
+        self._current_query = query
 
         self.search_worker = SearchWorker(checked_folders, query, selected_extensions, self)
         self.search_worker.result_found.connect(self._append_result)
@@ -1096,66 +1172,169 @@ class DocumentSearchMainWindow(QMainWindow):
 
     def _append_result_item(self, payload: dict[str, str]) -> None:
         include_snippet = self.include_snippet_checkbox.isChecked()
-        widget = CustomResultWidget(
-            file_data=payload,
-            snippet_text=payload.get('snippet', ''),
-            include_snippet=include_snippet,
-        )
-        list_item = QListWidgetItem()
-        list_item.setData(Qt.ItemDataRole.UserRole, payload.get('preview', ''))
-        list_item.setData(Qt.ItemDataRole.UserRole + 1, payload.get('file_path', ''))
-        list_item.setData(Qt.ItemDataRole.UserRole + 2, payload.get('file_name', ''))
-        list_item.setSizeHint(widget.sizeHint())
-        self.result_list.addItem(list_item)
-        self.result_list.setItemWidget(list_item, widget)
-
-        self.result_meta_label.setText(f"{self.result_list.count()}개 문서")
-        if self.result_list.currentItem() is None:
-            self.result_list.setCurrentItem(list_item)
-        self._refresh_result_item_selection(self.result_list.currentItem())
-
+        
+        # 메타데이터 준비
+        file_name = payload.get('file_name', '')
+        file_path = payload.get('file_path', '')
+        file_size = payload.get('file_size', '')
+        file_kind = payload.get('file_kind', '')
+        created_at = payload.get('created_at', '')
+        modified_at = payload.get('modified_at', '')
+        snippet = payload.get('snippet', '')
+        preview = payload.get('preview', '')
+        
+        # 검색어 강조 표시 기능 제거 - 일반 텍스트로 표시
+        pass
+        
+        if include_snippet and snippet:
+            # 스니펫 포함 시: 2개의 행 삽입
+            # 첫 번째 행: 메타데이터
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            
+            # 메타데이터 아이템 생성
+            items = [
+                QTableWidgetItem(file_name),   # 파일명
+                QTableWidgetItem(file_kind),   # 종류
+                QTableWidgetItem(file_size),   # 크기
+                QTableWidgetItem(created_at),  # 생성일
+                QTableWidgetItem(file_path)    # 경로
+            ]
+            
+            for col, item in enumerate(items):
+                item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
+                item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
+                item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
+                self.result_table.setItem(row, col, item)
+            
+            # 두 번째 행: 스니펫 (5개 컬럼 병합)
+            snippet_row = self.result_table.rowCount()
+            self.result_table.insertRow(snippet_row)
+            
+            snippet_item = QTableWidgetItem(snippet)
+            snippet_item.setForeground(QColor('#6b7280'))  # 옅은 회색
+            snippet_item.setFont(QFont("Segoe UI", 9))  # 약간 작은 폰트
+            snippet_item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
+            snippet_item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
+            snippet_item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
+            
+            self.result_table.setItem(snippet_row, 0, snippet_item)
+            self.result_table.setSpan(snippet_row, 0, 1, 5)  # 5개 컬럼 병합
+            
+        else:
+            # 스니펫 미포함 시: 1개의 행만 삽입
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            
+            # 메타데이터 아이템 생성
+            items = [
+                QTableWidgetItem(file_name),   # 파일명
+                QTableWidgetItem(file_kind),   # 종류
+                QTableWidgetItem(file_size),   # 크기
+                QTableWidgetItem(created_at),  # 생성일
+                QTableWidgetItem(file_path)    # 경로
+            ]
+            
+            for col, item in enumerate(items):
+                item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
+                item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
+                item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
+                self.result_table.setItem(row, col, item)
+        
+        # 행 높이 자동 조절
+        self.result_table.resizeRowsToContents()
+        
+        # 결과 카운트 업데이트
+        self.result_meta_label.setText(f"{len(self._result_payloads)}개 문서")
+        
+        # 첫 번째 결과 자동 선택
+        if self.result_table.currentRow() == -1:
+            self.result_table.selectRow(0)
+            self._handle_table_selection_changed()
+    
     def _rerender_result_items(self, checked: bool | None = None) -> None:
-        if not hasattr(self, 'result_list'):
+        if not hasattr(self, 'result_table'):
             return
         selected_path = self.current_preview_path
-        self.result_list.clear()
+        self.result_table.setRowCount(0)  # 테이블 초기화
         for payload in self._result_payloads:
             self._append_result_item(payload)
         if selected_path:
-            for index in range(self.result_list.count()):
-                item = self.result_list.item(index)
-                if item.data(Qt.ItemDataRole.UserRole + 1) == selected_path:
-                    self.result_list.setCurrentItem(item)
+            # 선택된 경로에 해당하는 행 찾기
+            for row in range(self.result_table.rowCount()):
+                item = self.result_table.item(row, 0)  # 첫 번째 컬럼에서 데이터 확인
+                if item and item.data(Qt.ItemDataRole.UserRole + 1) == selected_path:
+                    self.result_table.selectRow(row)
                     break
-        self._refresh_result_item_selection(self.result_list.currentItem())
         self._update_conditions_summary()
 
-    def _refresh_result_item_selection(self, current_item) -> None:
-        for index in range(self.result_list.count()):
-            item = self.result_list.item(index)
-            widget = self.result_list.itemWidget(item)
-            if isinstance(widget, CustomResultWidget):
-                widget.set_selected(item is current_item)
+    def _handle_table_selection_changed(self) -> None:
+        """QTableWidget 선택 변경 처리 - 스니펫 행과 메타데이터 행 연동"""
+        current_row = self.result_table.currentRow()
+        if current_row >= 0:
+            # 현재 행이 스니펫 행인지 확인 (첫 번째 컬럼에만 데이터가 있고 나머지는 비어있으면 스니펫 행)
+            is_snippet_row = False
+            for col in range(1, 5):  # 1-4번 컬럼 확인
+                if self.result_table.item(current_row, col) is None:
+                    is_snippet_row = True
+                    break
+            
+            # 스니펫 행이면 바로 위의 메타데이터 행으로 이동
+            target_row = current_row
+            if is_snippet_row and current_row > 0:
+                target_row = current_row - 1
+                # 메타데이터 행 선택
+                self.result_table.selectRow(target_row)
+            
+            # 대상 행에서 데이터 가져오기
+            item = self.result_table.item(target_row, 0)  # 첫 번째 컬럼에서 데이터 가져오기
+            if item:
+                file_path = item.data(Qt.ItemDataRole.UserRole + 1)
+                preview = item.data(Qt.ItemDataRole.UserRole)
+                file_name = item.data(Qt.ItemDataRole.UserRole + 2)
+                self._load_preview(file_path, preview, file_name)
+        else:
+            self._clear_preview()
 
     def _update_progress(self, current: int, total: int, current_file: str) -> None:
         file_name = os.path.basename(current_file)
-        self.status_label.setText(f"{current} / {total} 파일 스캔 중 - {file_name}")
+        percentage = int((current / total) * 100) if total > 0 else 0
+        
+        # 진행 바 업데이트
+        self.progress_bar.setValue(percentage)
+        self.progress_title.setText(f"검색 진행 중 ({percentage}%)")
+        self.progress_status.setText(f"{current:,} / {total:,} 파일 스캔 중")
+        self.progress_details.setText(f"현재 파일: {file_name}")
+        
+        # 진행 정보는 검색 조건 탭에서만 표시됨
 
     def _finish_search(self, found_count: int, scanned_count: int, cancelled: bool) -> None:
         self.search_button.setEnabled(True)
         self.folder_tree.setEnabled(True)
         self.cancel_button.setVisible(False)
         print(f"[DocumentSearch] finish signal scanned={scanned_count} found={found_count} cancelled={cancelled}")
+        
+        # 진행 바 완료 처리
+        self.progress_bar.setValue(100)
         if cancelled:
-            self.status_label.setText(f"검색이 취소되었습니다. {scanned_count}개 파일 확인, {found_count}개 결과")
+            self.progress_title.setText("검색 취소됨")
+            self.progress_status.setText(f"{scanned_count:,}개 파일 확인, {found_count}개 결과")
+            self.progress_details.setText("검색이 사용자에 의해 취소되었습니다.")
         else:
-            self.status_label.setText(f"검색 완료: {scanned_count}개 파일 확인, {found_count}개 결과")
+            self.progress_title.setText("검색 완료")
+            self.progress_status.setText(f"{scanned_count:,}개 파일 확인, {found_count:,}개 결과")
+            self.progress_details.setText("모든 파일 검색이 완료되었습니다.")
 
     def _fail_search(self, message: str) -> None:
         self.search_button.setEnabled(True)
         self.folder_tree.setEnabled(True)
         self.cancel_button.setVisible(False)
-        self.status_label.setText("검색 중 오류가 발생했습니다.")
+        
+        # 진행 바 오류 처리
+        self.progress_bar.setValue(0)
+        self.progress_title.setText("검색 오류")
+        self.progress_status.setText("검색 중 오류가 발생했습니다.")
+        self.progress_details.setText(f"오류 내용: {message}")
         print(f"[DocumentSearch] fail signal message={message}")
         QMessageBox.critical(self, "검색 오류", message)
 
@@ -1163,27 +1342,17 @@ class DocumentSearchMainWindow(QMainWindow):
         if self.search_worker and self.search_worker.isRunning():
             self.search_worker.cancel()
 
-    def _handle_selection_changed(self, current=None, previous=None) -> None:
-        item = current if current is not None else self.result_list.currentItem()
-        self._refresh_result_item_selection(item)
-        if item is None:
-            self._clear_preview()
-            return
-
-        widget = self.result_list.itemWidget(item)
-        if widget is not None:
-            self.preview_title.setText(widget.file_name)
-        else:
-            self.preview_title.setText("미리보기")
-        self.current_preview_path = item.data(Qt.ItemDataRole.UserRole + 1) or ''
-        preview_text = item.data(Qt.ItemDataRole.UserRole) or "문서를 선택하면 미리보기가 표시됩니다."
-        self._update_preview_surface(self.current_preview_path, preview_text)
+    def _load_preview(self, file_path: str, preview: str, file_name: str) -> None:
+        """미리보기 로드"""
+        self.preview_title.setText(file_name if file_name else "미리보기")
+        self.current_preview_path = file_path
+        preview_text = preview or "문서를 선택하면 미리보기가 표시됩니다."
+        self._update_preview_surface(file_path, preview_text)
 
     def _update_checked_paths_label(self) -> None:
         checked_folders = sorted(self.checked_folder_paths_set)
         if not checked_folders:
             self.checked_paths_label.setText("선택된 폴더 없음")
-            self.status_label.setText("왼쪽에서 검색할 폴더를 체크하고 검색어를 입력하세요.")
             return
         if len(checked_folders) == 1:
             self.checked_paths_label.setText(checked_folders[0])
@@ -1207,20 +1376,28 @@ class DocumentSearchMainWindow(QMainWindow):
         self.preview_text.setVisible(True)
 
     def _clear_preview(self) -> None:
-        self.result_list.clearSelection()
-        self._refresh_result_item_selection(None)
+        if hasattr(self, 'result_table'):
+            self.result_table.clearSelection()
         self.preview_title.setText("미리보기")
         self.current_preview_path = ''
         self.preview_image.clear()
         self.preview_image.setVisible(False)
         self.preview_text.setVisible(True)
         self.preview_text.setPlainText("문서를 선택하면 미리보기가 표시됩니다.")
+        
+        # 진행 상태 초기화 (검색 시작 전 상태로)
+        if not self.search_worker or not self.search_worker.isRunning():
+            self.progress_bar.setValue(0)
+            self.progress_title.setText("검색 준비")
+            self.progress_status.setText("폴더를 선택하고 검색어를 입력하세요.")
+            self.progress_details.setText("")
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
+            /* ── iOS-style Document Search ── */
             QMainWindow {
-                background: #F5F6FA;
+                background: #F2F2F7;
             }
             QToolBar {
                 background: transparent;
@@ -1229,205 +1406,301 @@ class DocumentSearchMainWindow(QMainWindow):
                 padding: 0 0 8px 0;
             }
             QToolButton {
-                background: #ffffff;
-                border: 1px solid #d8e0ea;
-                border-radius: 10px;
-                padding: 6px 10px;
-                color: #243447;
+                background: #FFFFFF;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 12px;
+                padding: 7px 12px;
+                color: #007AFF;
+                font-weight: 500;
             }
             QToolButton:hover {
-                background: #f1f5f9;
+                background: rgba(0, 122, 255, 0.06);
             }
             #panelCard {
                 background: #FFFFFF;
-                border: 1px solid #E5E7EB;
+                border: 0.5px solid #C6C6C8;
                 border-radius: 16px;
             }
             QLabel {
-                color: #243447;
+                color: #1C1C1E;
             }
             #sectionTitle {
-                font-size: 16px;
+                font-size: 17px;
                 font-weight: 700;
-                color: #1f2937;
-                padding: 2px 2px 6px 2px;
+                color: #1C1C1E;
+                padding: 2px 2px 8px 2px;
+                letter-spacing: -0.4px;
             }
             #fieldLabel {
                 font-size: 13px;
                 font-weight: 600;
-                color: #374151;
-                padding-top: 2px;
+                color: #3C3C43;
+                padding-top: 4px;
             }
             #metaLabel {
-                color: #6b7280;
+                color: #8E8E93;
                 font-size: 12px;
             }
             #innerCard {
-                background: #f8fafc;
-                border: 1px solid #e5e7eb;
-                border-radius: 12px;
+                background: #F2F2F7;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 14px;
             }
             QLineEdit, QTextEdit, QTreeWidget, QTreeView {
                 background: #FFFFFF;
-                border: 1px solid #E5E7EB;
+                border: 0.5px solid #C6C6C8;
                 border-radius: 12px;
-                padding: 8px 10px;
-                color: #1f2937;
-                selection-background-color: #e0ecff;
+                padding: 9px 12px;
+                color: #1C1C1E;
+                selection-background-color: rgba(0, 122, 255, 0.25);
+            }
+            QLineEdit:focus {
+                border: 1.5px solid #007AFF;
             }
             QLineEdit[readOnly="true"] {
-                color: #4b5563;
-                background: #f9fafb;
+                color: #8E8E93;
+                background: #F2F2F7;
             }
             QPushButton {
-                background: #ffffff;
-                border: 1px solid #d1d5db;
-                border-radius: 10px;
-                padding: 0 16px;
-                color: #1f2937;
-                font-weight: 600;
+                background: #FFFFFF;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 12px;
+                padding: 0 18px;
+                color: #007AFF;
+                font-weight: 500;
+                font-size: 13px;
             }
             QPushButton:hover {
-                background: #f5f9ff;
-                border-color: #b9d1ff;
+                background: rgba(0, 122, 255, 0.06);
+                border-color: #007AFF;
             }
             QPushButton:pressed {
-                background: #e5efff;
+                background: rgba(0, 122, 255, 0.12);
             }
             QCheckBox {
-                color: #1f2937;
+                color: #1C1C1E;
                 spacing: 8px;
+                font-size: 13px;
             }
             QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 1px solid #cbd5e1;
-                border-radius: 4px;
-                background: #ffffff;
+                width: 18px;
+                height: 18px;
+                border: 1.5px solid #C6C6C8;
+                border-radius: 5px;
+                background: #FFFFFF;
             }
             QCheckBox::indicator:checked {
-                background: #3b82f6;
-                border: 1px solid #3b82f6;
+                background: #007AFF;
+                border: 1.5px solid #007AFF;
             }
+            /* ── Folder Tree ── */
             QTreeWidget, QTreeView {
                 outline: none;
                 padding: 6px;
             }
             QTreeWidget::item, QTreeView::item {
                 padding: 10px 8px;
-                border-radius: 8px;
+                border-radius: 10px;
             }
             QTreeWidget::item:hover, QTreeView::item:hover {
-                background: #EEF3FF;
+                background: rgba(0, 122, 255, 0.06);
             }
             QTreeWidget::item:selected, QTreeView::item:selected {
-                background: #E2E8F5;
-                color: #111827;
+                background: rgba(0, 122, 255, 0.12);
+                color: #1C1C1E;
             }
             QTreeWidget::branch, QTreeView::branch {
                 border-image: none;
                 image: none;
                 background: transparent;
             }
+            /* ── Result List ── */
             QListWidget#resultList {
                 outline: none;
-                border: 1px solid #e5e7eb;
-                border-radius: 12px;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 14px;
                 background: #FFFFFF;
                 padding: 6px;
             }
             QListWidget#resultList::item {
                 border: none;
-                margin: 0px 0px 8px 0px;
+                margin: 0px 0px 6px 0px;
                 padding: 0px;
             }
             QListWidget#resultList::item:selected {
                 background: transparent;
             }
             #resultHeaderCard {
-                background: #F8FAFC;
-                border: 1px solid #E5E7EB;
-                border-radius: 10px;
-            }
-            #resultHeaderLabel {
-                color: #6B7280;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            #resultItemCard {
-                background: #ffffff;
-                border: 1px solid #e5e7eb;
+                background: #F2F2F7;
+                border: 0.5px solid #C6C6C8;
                 border-radius: 12px;
             }
+            #resultHeaderLabel {
+                color: #8E8E93;
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }
+            /* ── Result Card ── */
+            #resultItemCard {
+                background: #FFFFFF;
+                border: 0.5px solid #E5E5EA;
+                border-radius: 14px;
+            }
             #resultItemCard[selected="true"] {
-                background: #EFF6FF;
-                border: 1px solid #93C5FD;
+                background: rgba(0, 122, 255, 0.06);
+                border: 1.5px solid #007AFF;
             }
             #resultMetaLabel {
-                color: #4B5563;
+                color: #8E8E93;
                 font-size: 11px;
             }
             #resultSnippetLabel {
-                color: #1f2937;
+                color: #1C1C1E;
                 font-size: 12px;
-                line-height: 1.35;
-                background: #f8fafc;
-                border: 1px solid #edf2f7;
-                border-radius: 8px;
-                padding: 6px 8px;
+                line-height: 1.4;
+                background: #F2F2F7;
+                border: 0.5px solid #E5E5EA;
+                border-radius: 10px;
+                padding: 8px 10px;
             }
             #resultItemCard[selected="true"] #resultSnippetLabel {
-                background: #DBEAFE;
-                border: 1px solid #93C5FD;
-                color: #1E3A8A;
+                background: rgba(0, 122, 255, 0.10);
+                border: 0.5px solid rgba(0, 122, 255, 0.3);
+                color: #003D80;
             }
             QHeaderView::section {
-                background: #f9fafb;
-                color: #475569;
+                background: #F2F2F7;
+                color: #8E8E93;
                 border: none;
-                border-bottom: 1px solid #e5e7eb;
+                border-bottom: 0.5px solid #C6C6C8;
                 padding: 8px;
                 font-weight: 600;
+                font-size: 12px;
             }
+            /* ── Preview ── */
             QScrollArea {
                 background: transparent;
                 border: none;
             }
             QTextEdit {
-                padding: 12px;
+                padding: 14px;
+                border-radius: 12px;
             }
             #previewImage {
-                background: #f9fafb;
-                border: 1px solid #e5e7eb;
-                border-radius: 12px;
+                background: #F2F2F7;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 14px;
                 min-height: 160px;
             }
+            /* ── Tabs ── */
+            QTabWidget#searchTabs {
+                background: transparent;
+                border: none;
+            }
+            QTabWidget#searchTabs::pane {
+                background: #FFFFFF;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 14px;
+                top: -1px;
+            }
+            QTabWidget#searchTabs::tab-bar {
+                alignment: left;
+            }
+            QTabWidget#searchTabs QTabBar::tab {
+                background: #F2F2F7;
+                border: 0.5px solid #C6C6C8;
+                border-bottom: none;
+                border-radius: 10px 10px 0 0;
+                padding: 8px 16px;
+                margin-right: 2px;
+                font-weight: 500;
+                font-size: 13px;
+                color: #8E8E93;
+            }
+            QTabWidget#searchTabs QTabBar::tab:selected {
+                background: #FFFFFF;
+                color: #007AFF;
+                border-bottom: 1px solid #FFFFFF;
+            }
+            QTabWidget#searchTabs QTabBar::tab:hover {
+                background: rgba(0, 122, 255, 0.06);
+                color: #007AFF;
+            }
+            /* ── Table Widget ── */
+            QTableWidget#resultTable {
+                background: #FFFFFF;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 12px;
+                gridline-color: #E5E5EA;
+                selection-background-color: rgba(0, 122, 255, 0.15);
+                selection-color: #007AFF;
+                alternate-background-color: #F9FAFB;
+            }
+            QTableWidget#resultTable::item {
+                padding: 10px 12px;
+                border: none;
+            }
+            QTableWidget#resultTable::item:selected {
+                background: rgba(0, 122, 255, 0.15);
+                color: #007AFF;
+            }
+            QTableWidget#resultTable::item:hover {
+                background: rgba(0, 122, 255, 0.08);
+            }
+            QTableWidget#resultTable QHeaderView::section {
+                background: #F2F2F7;
+                border: none;
+                border-bottom: 0.5px solid #C6C6C8;
+                padding: 12px;
+                font-weight: 600;
+                font-size: 13px;
+                color: #3C3C43;
+            }
+            QTableWidget#resultTable QHeaderView::section:first {
+                border-top-left-radius: 12px;
+            }
+            QTableWidget#resultTable QHeaderView::section:last {
+                border-top-right-radius: 12px;
+            }
+            /* ── Progress Bar ── */
+            QProgressBar {
+                background: #F2F2F7;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background: #007AFF;
+                border-radius: 2px;
+            }
+            /* ── Splitter ── */
             QSplitter::handle {
                 background: transparent;
             }
             QSplitter::handle:hover {
-                background: rgba(148, 163, 184, 0.18);
+                background: rgba(0, 122, 255, 0.10);
                 border-radius: 3px;
             }
+            /* ── Scrollbars (iOS thin) ── */
             QScrollBar:vertical, QScrollBar:horizontal {
                 background: transparent;
                 border: none;
                 margin: 2px;
             }
             QScrollBar:vertical {
-                width: 8px;
+                width: 6px;
             }
             QScrollBar:horizontal {
-                height: 8px;
+                height: 6px;
             }
             QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-                background: #B7C3D6;
-                border-radius: 4px;
-                min-height: 24px;
-                min-width: 24px;
+                background: rgba(0, 0, 0, 0.18);
+                border-radius: 3px;
+                min-height: 28px;
+                min-width: 28px;
             }
             QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
-                background: #8EA1BC;
+                background: rgba(0, 0, 0, 0.35);
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,

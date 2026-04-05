@@ -139,7 +139,7 @@ class SelectableLabel(QLabel):
         self.selection_end = None
         self.is_selecting = False
         self.page_num = -1
-        self.setStyleSheet('border: 1px solid #ccc; background-color: white;')
+        self.setStyleSheet('border: 0.5px solid #C6C6C8; background-color: white; border-radius: 4px;')
         self.setMargin(0)
 
     def _image_rect(self):
@@ -222,22 +222,26 @@ class PDFViewer(QScrollArea):
         # Zoom controls
         self.zoom_in_btn = QPushButton('🔍+')
         self.zoom_in_btn.setObjectName('toolbarBtn')
-        self.zoom_in_btn.setFixedSize(32, 32)
+        self.zoom_in_btn.setFixedSize(30, 30)
+        self.zoom_in_btn.setStyleSheet('font-size: 10px;')
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         
         self.zoom_out_btn = QPushButton('🔍-')
         self.zoom_out_btn.setObjectName('toolbarBtn')
-        self.zoom_out_btn.setFixedSize(32, 32)
+        self.zoom_out_btn.setFixedSize(30, 30)
+        self.zoom_out_btn.setStyleSheet('font-size: 10px;')
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         
         self.fit_width_btn = QPushButton('너비')
         self.fit_width_btn.setObjectName('toolbarBtn')
-        self.fit_width_btn.setFixedHeight(32)
+        self.fit_width_btn.setFixedHeight(30)
+        self.fit_width_btn.setStyleSheet('font-size: 10px;')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
         
         self.fit_page_btn = QPushButton('페이지')
         self.fit_page_btn.setObjectName('toolbarBtn')
-        self.fit_page_btn.setFixedHeight(32)
+        self.fit_page_btn.setFixedHeight(30)
+        self.fit_page_btn.setStyleSheet('font-size: 10px;')
         self.fit_page_btn.clicked.connect(self.fit_to_page)
         
         self.zoom_label = QLabel(f'{int(self.scale * 100)}%')
@@ -254,12 +258,14 @@ class PDFViewer(QScrollArea):
         
         self.find_prev_btn = QPushButton('▲')
         self.find_prev_btn.setObjectName('toolbarBtn')
-        self.find_prev_btn.setFixedSize(32, 32)
+        self.find_prev_btn.setFixedSize(28, 28)
+        self.find_prev_btn.setStyleSheet('font-size: 9px;')
         self.find_prev_btn.clicked.connect(self.find_previous)
         
         self.find_next_btn = QPushButton('▼')
         self.find_next_btn.setObjectName('toolbarBtn')
-        self.find_next_btn.setFixedSize(32, 32)
+        self.find_next_btn.setFixedSize(28, 28)
+        self.find_next_btn.setStyleSheet('font-size: 9px;')
         self.find_next_btn.clicked.connect(self.find_next)
         
         # Add to toolbar
@@ -299,12 +305,13 @@ class PDFViewer(QScrollArea):
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_label.setStyleSheet('''
             QLabel {
-                color: #666666;
-                font-size: 14px;
-                padding: 40px;
-                border: 2px dashed #DCDFE6;
-                border-radius: 8px;
-                background-color: #F8F9FA;
+                color: #8E8E93;
+                font-size: 15px;
+                font-weight: 500;
+                padding: 48px;
+                border: 2px dashed #C6C6C8;
+                border-radius: 16px;
+                background-color: rgba(242, 242, 247, 0.6);
             }
         ''')
         self.vbox.addWidget(self.drop_label)
@@ -330,9 +337,9 @@ class PDFViewer(QScrollArea):
         if not self.parent_tool:
             return
         if self == self.parent_tool.viewer1:
-            self.parent_tool.lbl_name1.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
+            self.parent_tool.lbl_name1.setText(f"<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
         elif self == self.parent_tool.viewer2:
-            self.parent_tool.lbl_name2.setText(f"<b style='color:#004b93; font-size:14px;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
+            self.parent_tool.lbl_name2.setText(f"<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
 
     def open_pdf_via_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, 'PDF 파일 선택', '', 'PDF Files (*.pdf)')
@@ -359,12 +366,13 @@ class PDFViewer(QScrollArea):
                     if hasattr(self, 'drop_label') and self.drop_label.isVisible():
                         self.drop_label.setStyleSheet('''
                             QLabel {
-                                color: #004b93;
-                                font-size: 14px;
-                                padding: 40px;
-                                border: 2px dashed #004b93;
-                                border-radius: 8px;
-                                background-color: #F2F6FC;
+                                color: #007AFF;
+                                font-size: 15px;
+                                font-weight: 500;
+                                padding: 48px;
+                                border: 2px dashed #007AFF;
+                                border-radius: 16px;
+                                background-color: rgba(0, 122, 255, 0.06);
                             }
                         ''')
                     return
@@ -376,12 +384,13 @@ class PDFViewer(QScrollArea):
         if hasattr(self, 'drop_label') and self.drop_label.isVisible():
             self.drop_label.setStyleSheet('''
                 QLabel {
-                    color: #666666;
-                    font-size: 14px;
-                    padding: 40px;
-                    border: 2px dashed #DCDFE6;
-                    border-radius: 8px;
-                    background-color: #F8F9FA;
+                    color: #8E8E93;
+                    font-size: 15px;
+                    font-weight: 500;
+                    padding: 48px;
+                    border: 2px dashed #C6C6C8;
+                    border-radius: 16px;
+                    background-color: rgba(242, 242, 247, 0.6);
                 }
             ''')
     
@@ -732,8 +741,8 @@ class PdfCompareWidget(QWidget):
         self.viewer1.set_parent_tool(self)  # Set parent reference
         
         # Add PDF name label at top with minimal margin
-        self.lbl_name1 = QLabel("<b style='color:#004b93; font-size:14px;'>[PDF 1]</b>")
-        self.lbl_name1.setContentsMargins(8, 2, 8, 0)
+        self.lbl_name1 = QLabel("<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 1]</b>")
+        self.lbl_name1.setContentsMargins(10, 6, 10, 4)
         v1_layout.addWidget(self.lbl_name1)
         
         # Add toolbar
@@ -741,7 +750,7 @@ class PdfCompareWidget(QWidget):
         v1_layout.addWidget(self.viewer1, 1)
         
         # Create PDF name labels
-        self.lbl_name2 = QLabel("<b style='color:#004b93; font-size:14px;'>[PDF 2]</b>")
+        self.lbl_name2 = QLabel("<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 2]</b>")
         
         # Bottom controls for PDF 1 (removed - moved to bottom bar)
         workspace_layout.addWidget(v1_panel)
@@ -773,40 +782,40 @@ class PdfCompareWidget(QWidget):
         bottom_action_bar = QFrame()
         bottom_action_bar.setObjectName('actionBar')
         bottom_action_layout = QHBoxLayout(bottom_action_bar)
-        bottom_action_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_action_layout.setSpacing(12)
-        
-        # Left: Extract data button
-        self.btn_view_text = QPushButton('추출 데이터 확인')
-        self.btn_view_text.setObjectName('actionBtn')
-        self.btn_view_text.setFixedHeight(36)
-        self.btn_view_text.setMinimumWidth(120)
+        bottom_action_layout.setContentsMargins(12, 8, 12, 8)
+        bottom_action_layout.setSpacing(10)
+
+        # Left: Extract data button (secondary)
+        self.btn_view_text = QPushButton('📋  추출 데이터 확인')
+        self.btn_view_text.setObjectName('secondaryBtn')
+        self.btn_view_text.setFixedHeight(40)
+        self.btn_view_text.setMinimumWidth(150)
         bottom_action_layout.addWidget(self.btn_view_text)
-        
+
         bottom_action_layout.addStretch()
-        
-        # Center: Compare button
-        self.btn_compare = QPushButton('비교 실행')
+
+        # Center: Compare button (primary)
+        self.btn_compare = QPushButton('⚡  비교 실행')
         self.btn_compare.setObjectName('compareBtn')
-        self.btn_compare.setFixedHeight(36)
-        self.btn_compare.setMinimumWidth(120)
+        self.btn_compare.setFixedHeight(42)
+        self.btn_compare.setMinimumWidth(150)
         bottom_action_layout.addWidget(self.btn_compare)
-        
+
         bottom_action_layout.addStretch()
-        
-        # Right: Reset buttons
-        self.btn_reset_all = QPushButton('전체 초기화')
-        self.btn_reset_all.setObjectName('actionBtn')
-        self.btn_reset_all.setFixedHeight(36)
-        self.btn_reset_all.setMinimumWidth(100)
-        bottom_action_layout.addWidget(self.btn_reset_all)
-        
-        self.btn_reset_page = QPushButton('페이지 초기화')
-        self.btn_reset_page.setObjectName('actionBtn')
-        self.btn_reset_page.setFixedHeight(36)
-        self.btn_reset_page.setMinimumWidth(100)
+
+        # Right: Reset buttons (destructive)
+        self.btn_reset_page = QPushButton('↩  페이지 초기화')
+        self.btn_reset_page.setObjectName('resetBtn')
+        self.btn_reset_page.setFixedHeight(40)
+        self.btn_reset_page.setMinimumWidth(130)
         bottom_action_layout.addWidget(self.btn_reset_page)
-        
+
+        self.btn_reset_all = QPushButton('🗑  전체 초기화')
+        self.btn_reset_all.setObjectName('resetBtn')
+        self.btn_reset_all.setFixedHeight(40)
+        self.btn_reset_all.setMinimumWidth(120)
+        bottom_action_layout.addWidget(self.btn_reset_all)
+
         layout.addWidget(bottom_action_bar)
 
         self.loading = LoadingOverlay(self)
