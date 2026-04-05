@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, 
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, ENABLE_INTERNAL_REPORT, ENABLE_LICENSE_MENU, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
+from app.tools.document_search_ui import DocumentSearchWidget
 from app.tools.pdf_header_footer_compare import HFCompareWidget
 from app.tools.pdf_compare import PdfCompareWidget
 
@@ -216,6 +217,14 @@ class MdiMainWindow(QMainWindow):
 
     def register_tools(self):
         tool_definitions = [
+            {
+                'key': DocumentSearchWidget.tool_key,
+                'menu_title': DocumentSearchWidget.tool_name,
+                'window_title': DocumentSearchWidget.window_title,
+                'factory': DocumentSearchWidget,
+                'singleton': DocumentSearchWidget.singleton,
+                'enabled': DocumentSearchWidget.enabled,
+            },
             {
                 'key': HFCompareWidget.tool_key,
                 'menu_title': '📄 PDF 출력물 비교',
