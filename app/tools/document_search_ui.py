@@ -106,7 +106,7 @@ def list_files_win32(directory: str) -> list[str]:
 
 try:
     from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QSize, Qt, QThread, Signal
-    from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap
+    from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -127,9 +127,11 @@ try:
         QScrollArea,
         QSizePolicy,
         QSplitter,
+        QStackedWidget,
         QTabWidget,
         QTableWidget,
         QTableWidgetItem,
+        QTextBrowser,
         QTextEdit,
         QTreeView,
         QTreeWidget,
@@ -139,7 +141,7 @@ try:
     )
 except ImportError:
     from PyQt6.QtCore import QDir, QModelIndex, QSize, Qt, QThread, pyqtSignal
-    from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap
+    from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
     from PyQt6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -160,9 +162,11 @@ except ImportError:
         QScrollArea,
         QSizePolicy,
         QSplitter,
+        QStackedWidget,
         QTabWidget,
         QTableWidget,
         QTableWidgetItem,
+        QTextBrowser,
         QTextEdit,
         QTreeView,
         QTreeWidget,
@@ -272,6 +276,11 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from doc_search.extractors import get_extractor
+
+
+# Preview page indices for QStackedWidget
+PREVIEW_PAGE_IMAGE = 0  # QLabel for PDF/image thumbnails
+PREVIEW_PAGE_TEXT = 1   # QTextBrowser for HTML/text content
 
 
 def format_datetime(timestamp: float) -> str:
@@ -844,29 +853,26 @@ class DocumentSearchMainWindow(QMainWindow):
         self.preview_title.setObjectName("sectionTitle")
         layout.addWidget(self.preview_title)
 
-        self.preview_scroll = QScrollArea()
-        self.preview_scroll.setWidgetResizable(True)
-        self.preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # QStackedWidget for dynamic preview content
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.setObjectName("previewStack")
 
-        preview_container = QWidget()
-        preview_layout = QVBoxLayout(preview_container)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(10)
+        # Page 0: QLabel for image/PDF thumbnails
+        self.preview_image_label = QLabel()
+        self.preview_image_label.setObjectName("previewImage")
+        self.preview_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_image_label.setScaledContents(True)
+        self.preview_image_label.setMinimumHeight(200)
+        self.preview_stack.addWidget(self.preview_image_label)
 
-        self.preview_image = QLabel()
-        self.preview_image.setObjectName("previewImage")
-        self.preview_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_image.setVisible(False)
-        preview_layout.addWidget(self.preview_image)
+        # Page 1: QTextBrowser for HTML/text content
+        self.preview_text_browser = QTextBrowser()
+        self.preview_text_browser.setObjectName("previewTextBrowser")
+        self.preview_text_browser.setOpenExternalLinks(False)
+        self.preview_text_browser.setPlaceholderText("문서를 선택하면 미리보기가 표시됩니다.")
+        self.preview_stack.addWidget(self.preview_text_browser)
 
-        self.preview_text = QTextEdit()
-        self.preview_text.setReadOnly(True)
-        self.preview_text.setPlaceholderText("문서를 선택하면 미리보기가 표시됩니다.")
-        self.preview_text.setPlainText("문서를 선택하면 미리보기가 표시됩니다.")
-        preview_layout.addWidget(self.preview_text)
-
-        self.preview_scroll.setWidget(preview_container)
-        layout.addWidget(self.preview_scroll, 1)
+        layout.addWidget(self.preview_stack, 1)
         return panel
 
     def _load_dummy_results_for_test(self) -> None:
@@ -1343,11 +1349,29 @@ class DocumentSearchMainWindow(QMainWindow):
             self.search_worker.cancel()
 
     def _load_preview(self, file_path: str, preview: str, file_name: str) -> None:
-        """미리보기 로드"""
+        """파일 확장자별 동적 미리보기 로드"""
         self.preview_title.setText(file_name if file_name else "미리보기")
         self.current_preview_path = file_path
-        preview_text = preview or "문서를 선택하면 미리보기가 표시됩니다."
-        self._update_preview_surface(file_path, preview_text)
+        
+        if not file_path or not Path(file_path).exists():
+            self._show_preview_error("파일을 찾을 수 없습니다.")
+            return
+        
+        suffix = Path(file_path).suffix.lower()
+        
+        try:
+            if suffix == '.pdf':
+                self._render_pdf_preview(file_path)
+            elif suffix in {'.xlsx', '.csv', '.cell'}:
+                self._render_spreadsheet_preview(file_path, suffix)
+            elif suffix in {'.hwp', '.hwpx', '.docx', '.txt'}:
+                self._render_text_preview(file_path, preview)
+            else:
+                # 기타 형식은 기존 preview 텍스트 사용
+                self._render_plain_preview(preview)
+        except Exception as e:
+            print(f"[Preview] Error loading preview for {file_path}: {e}")
+            self._show_preview_error("미리보기를 지원하지 않거나 파일을 읽을 수 없습니다.")
 
     def _update_checked_paths_label(self) -> None:
         checked_folders = sorted(self.checked_folder_paths_set)
@@ -1359,31 +1383,340 @@ class DocumentSearchMainWindow(QMainWindow):
         else:
             self.checked_paths_label.setText(f"{len(checked_folders)}개 폴더 선택됨")
 
+    def _render_pdf_preview(self, file_path: str) -> None:
+        """PDF 파일 미리보기 - PyMuPDF로 1페이지를 이미지로 렌더링"""
+        try:
+            import fitz  # PyMuPDF
+            
+            doc = fitz.open(file_path)
+            if doc.page_count == 0:
+                self._show_preview_error("PDF 페이지가 없습니다.")
+                return
+            
+            # 첫 페이지 렌더링
+            page = doc.load_page(0)
+            
+            # 적절한 해상도로 렌더링 (150 DPI 기준)
+            mat = fitz.Matrix(1.5, 1.5)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # QImage로 변환
+            img_data = pix.tobytes("ppm")
+            image = QImage.fromData(img_data, "ppm")
+            
+            if image.isNull():
+                self._show_preview_error("PDF 이미지 변환에 실패했습니다.")
+                return
+            
+            # QPixmap으로 변환하여 QLabel에 표시
+            pixmap = QPixmap.fromImage(image)
+            
+            # 스택 위젯을 이미지 페이지로 전환
+            self.preview_stack.setCurrentIndex(PREVIEW_PAGE_IMAGE)
+            self.preview_image_label.setPixmap(pixmap)
+            
+            doc.close()
+            
+        except ImportError:
+            self._show_preview_error("PDF 미리보기를 위한 PyMuPDF 라이브러리가 설치되지 않았습니다.")
+        except Exception as e:
+            print(f"[Preview] PDF rendering error: {e}")
+            self._show_preview_error("PDF 미리보기를 생성할 수 없습니다.")
+
+    def _render_spreadsheet_preview(self, file_path: str, suffix: str) -> None:
+        """엑셀/CSV 파일 미리보기 - pandas로 상위 30줄을 HTML 테이블로 변환"""
+        try:
+            import pandas as pd
+            
+            # 파일 형식에 따라 읽기
+            if suffix == '.csv':
+                # CSV는 인코딩 자동 감지
+                encodings = ['utf-8', 'utf-8-sig', 'cp949', 'euc-kr']
+                df = None
+                for encoding in encodings:
+                    try:
+                        df = pd.read_csv(file_path, nrows=30, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    raise ValueError("CSV 인코딩을 감지할 수 없습니다.")
+            elif suffix == '.cell':
+                # 한셀 파일은 pyhwp 또는 pandas 엔진 필요
+                try:
+                    df = pd.read_excel(file_path, nrows=30, engine='xlrd')
+                except:
+                    df = pd.read_excel(file_path, nrows=30, engine='openpyxl')
+            else:
+                # xlsx - 첫 번째 시트 읽기
+                df = pd.read_excel(file_path, sheet_name=0, nrows=30, engine='openpyxl')
+            
+            # HTML 테이블로 변환 (스타일 적용)
+            html_table = df.to_html(
+                index=False,
+                classes='preview-table',
+                border=0,
+                max_rows=30,
+                max_cols=20
+            )
+            
+            # HTML 문서 구성
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                        font-size: 13px;
+                        margin: 0;
+                        padding: 10px;
+                        background: #FFFFFF;
+                    }}
+                    .preview-table {{
+                        border-collapse: collapse;
+                        width: 100%;
+                        font-size: 12px;
+                    }}
+                    .preview-table th {{
+                        background: #F2F2F7;
+                        color: #3C3C43;
+                        padding: 8px 10px;
+                        text-align: left;
+                        font-weight: 600;
+                        border-bottom: 1px solid #C6C6C8;
+                        white-space: nowrap;
+                    }}
+                    .preview-table td {{
+                        padding: 6px 10px;
+                        border-bottom: 1px solid #E5E5EA;
+                        color: #1C1C1E;
+                    }}
+                    .preview-table tr:hover {{
+                        background: rgba(0, 122, 255, 0.06);
+                    }}
+                    .info {{
+                        color: #8E8E93;
+                        font-size: 11px;
+                        margin-bottom: 10px;
+                        padding: 8px;
+                        background: #F2F2F7;
+                        border-radius: 8px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="info">미리보기: 상위 {min(30, len(df))}행 / 전체 {len(df)}+행 (총 {len(df.columns)}열)</div>
+                {html_table}
+            </body>
+            </html>
+            """
+            
+            # 스택 위젯을 텍스트 페이지로 전환
+            self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
+            self.preview_text_browser.setHtml(html_content)
+            
+        except ImportError:
+            self._show_preview_error("스프레드시트 미리보기를 위한 pandas/openpyxl 라이브러리가 설치되지 않았습니다.")
+        except Exception as e:
+            print(f"[Preview] Spreadsheet rendering error: {e}")
+            self._show_preview_error(f"스프레드시트 미리보기를 생성할 수 없습니다: {str(e)[:100]}")
+
+    def _render_text_preview(self, file_path: str, preview_text: str) -> None:
+        """텍스트 문서 미리보기 - HTML 형식으로 스타일링"""
+        try:
+            # 텍스트 추출 (기존 preview 또는 새로 추출)
+            text = preview_text or ""
+            
+            if not text:
+                extractor = get_extractor(file_path)
+                if extractor:
+                    text = extractor.extract_text(file_path) or ""
+            
+            # 앞부분 1000자만 사용
+            text = text[:1000]
+            
+            # 첫 줄을 제목으로, 나머지를 본문으로 분리
+            lines = text.split('\n', 1)
+            title = lines[0].strip() if lines else ""
+            body = lines[1].strip() if len(lines) > 1 else ""
+            
+            # HTML 이스케이프
+            import html
+            title = html.escape(title)
+            body = html.escape(body).replace('\n', '<br>')
+            
+            # HTML 문서 구성
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                        font-size: 14px;
+                        line-height: 1.6;
+                        margin: 0;
+                        padding: 16px;
+                        background: #FFFFFF;
+                        color: #1C1C1E;
+                    }}
+                    h1 {{
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: #1C1C1E;
+                        margin: 0 0 12px 0;
+                        padding-bottom: 8px;
+                        border-bottom: 2px solid #007AFF;
+                    }}
+                    p {{
+                        margin: 0;
+                        color: #3C3C43;
+                    }}
+                    .preview-info {{
+                        color: #8E8E93;
+                        font-size: 11px;
+                        margin-top: 16px;
+                        padding-top: 12px;
+                        border-top: 1px solid #E5E5EA;
+                    }}
+                </style>
+            </head>
+            <body>
+                <h1>{title or "제목 없음"}</h1>
+                <p>{body or "(내용 없음)"}</p>
+                <div class="preview-info">미리보기: 앞부분 1000자까지 표시</div>
+            </body>
+            </html>
+            """
+            
+            # 스택 위젯을 텍스트 페이지로 전환
+            self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
+            self.preview_text_browser.setHtml(html_content)
+            
+        except Exception as e:
+            print(f"[Preview] Text rendering error: {e}")
+            self._show_preview_error("텍스트 미리보기를 생성할 수 없습니다.")
+
+    def _render_plain_preview(self, preview_text: str) -> None:
+        """일반 텍스트 미리보기"""
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    margin: 0;
+                    padding: 16px;
+                    background: #FFFFFF;
+                    color: #3C3C43;
+                }}
+            </style>
+        </head>
+        <body>
+            <pre>{preview_text or "문서를 선택하면 미리보기가 표시됩니다."}</pre>
+        </body>
+        </html>
+        """
+        self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
+        self.preview_text_browser.setHtml(html_content)
+
+    def _show_preview_error(self, message: str) -> None:
+        """미리보기 오류 표시 - 중앙 정렬된 안내 텍스트"""
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                    margin: 0;
+                    padding: 40px 20px;
+                    background: #F2F2F7;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 200px;
+                }}
+                .error-container {{
+                    text-align: center;
+                    color: #8E8E93;
+                }}
+                .error-icon {{
+                    font-size: 48px;
+                    margin-bottom: 16px;
+                }}
+                .error-message {{
+                    font-size: 14px;
+                    color: #8E8E93;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="error-container">
+                <div class="error-icon">📄</div>
+                <div class="error-message">{message}</div>
+            </div>
+        </body>
+        </html>
+        """
+        self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
+        self.preview_text_browser.setHtml(html_content)
+
     def _update_preview_surface(self, file_path: str, preview_text: str) -> None:
+        """이전 버전 호환용 - 이미지 파일 미리보기 (유지보수용)"""
         suffix = Path(file_path).suffix.lower()
         image_suffixes = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
+        
         if suffix in image_suffixes and Path(file_path).exists():
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                scaled = pixmap.scaled(640, 860, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                self.preview_image.setPixmap(scaled)
-                self.preview_image.setVisible(True)
-                self.preview_text.setVisible(False)
+                self.preview_stack.setCurrentIndex(PREVIEW_PAGE_IMAGE)
+                self.preview_image_label.setPixmap(pixmap)
                 return
-        self.preview_image.clear()
-        self.preview_image.setVisible(False)
-        self.preview_text.setPlainText(preview_text)
-        self.preview_text.setVisible(True)
+        
+        # 이미지가 아니면 텍스트로 표시
+        self._render_plain_preview(preview_text)
 
     def _clear_preview(self) -> None:
+        """미리보기 초기화"""
         if hasattr(self, 'result_table'):
             self.result_table.clearSelection()
         self.preview_title.setText("미리보기")
         self.current_preview_path = ''
-        self.preview_image.clear()
-        self.preview_image.setVisible(False)
-        self.preview_text.setVisible(True)
-        self.preview_text.setPlainText("문서를 선택하면 미리보기가 표시됩니다.")
+        
+        # 스택 위젯을 텍스트 페이지로 전환하고 기본 메시지 표시
+        self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
+        self.preview_text_browser.setHtml("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {
+                    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                    margin: 0;
+                    padding: 40px 20px;
+                    background: #F2F2F7;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 200px;
+                }
+                .placeholder {
+                    text-align: center;
+                    color: #8E8E93;
+                    font-size: 14px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="placeholder">문서를 선택하면 미리보기가 표시됩니다.</div>
+        </body>
+        </html>
+        """)
         
         # 진행 상태 초기화 (검색 시작 전 상태로)
         if not self.search_worker or not self.search_worker.isRunning():
