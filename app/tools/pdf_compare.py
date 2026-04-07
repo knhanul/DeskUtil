@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QFrame, QGraphic
 
 from app.common.resources import get_resource_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
+from app.common.pdf_search_helper import PDFSearchHelper
 
 
 class ViewComparisonTextDialog(QDialog):
@@ -248,25 +249,20 @@ class PDFViewer(QScrollArea):
         self.zoom_label.setObjectName('toolbarLabel')
         self.zoom_label.setFixedWidth(50)
         
-        # Search controls
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText('찾기...')
-        self.search_input.setObjectName('toolbarSearch')
-        self.search_input.setFixedWidth(150)
-        self.search_input.textChanged.connect(self.on_search_text_changed)
-        self.search_input.returnPressed.connect(self.find_next)
+        # Initialize search helper
+        self.search_helper = PDFSearchHelper(self)
         
-        self.find_prev_btn = QPushButton('▲')
-        self.find_prev_btn.setObjectName('toolbarBtn')
-        self.find_prev_btn.setFixedSize(28, 28)
-        self.find_prev_btn.setStyleSheet('font-size: 9px;')
-        self.find_prev_btn.clicked.connect(self.find_previous)
+        # Setup search UI using helper
+        search_input, find_prev_btn, find_next_btn, search_count_label = self.search_helper.setup_search_ui(toolbar_layout)
         
-        self.find_next_btn = QPushButton('▼')
-        self.find_next_btn.setObjectName('toolbarBtn')
-        self.find_next_btn.setFixedSize(28, 28)
-        self.find_next_btn.setStyleSheet('font-size: 9px;')
-        self.find_next_btn.clicked.connect(self.find_next)
+        # Store references for compatibility
+        self.search_input = search_input
+        self.find_prev_btn = find_prev_btn
+        self.find_next_btn = find_next_btn
+        
+        # Set Korean UI text
+        self.search_helper.set_placeholder_text('Search...')
+        self.search_helper.set_button_text('Prev', 'Next')
         
         # Add to toolbar
         toolbar_layout.addWidget(self.zoom_in_btn)
@@ -275,9 +271,6 @@ class PDFViewer(QScrollArea):
         toolbar_layout.addWidget(self.fit_page_btn)
         toolbar_layout.addWidget(self.zoom_label)
         toolbar_layout.addSpacing(16)
-        toolbar_layout.addWidget(self.search_input)
-        toolbar_layout.addWidget(self.find_prev_btn)
-        toolbar_layout.addWidget(self.find_next_btn)
         toolbar_layout.addStretch()
         
         # Scroll area for PDF content
@@ -295,10 +288,6 @@ class PDFViewer(QScrollArea):
         self.word_highlights = {}
         self.last_compared_area = {}
         self.pending_selection_rect = None
-        self.search_results = []
-        self.current_search_index = 0
-        self.search_highlights = {}
-        self.current_highlight = None  # Track current search result highlight
         
         # Add drop zone indicator when empty
         self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 버튼을 클릭하여 파일을 선택하세요')
@@ -454,20 +443,8 @@ class PDFViewer(QScrollArea):
                     if bbox:
                         rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale), int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
                         painter.fillRect(rect, color)
-            # Add search highlights in light gray
-            if i in self.search_highlights:
-                for bbox in self.search_highlights[i]:
-                    rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale), int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
-                    painter.fillRect(rect, QColor(200, 200, 200, 30))  # Very light gray background
-            # Add current result highlight with border box
-            if hasattr(self, 'current_highlights') and i in self.current_highlights:
-                for bbox in self.current_highlights[i]:
-                    rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale), int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
-                    # Light background
-                    painter.fillRect(rect, QColor(220, 220, 220, 40))  # Very light background
-                    # Border box
-                    painter.setPen(QPen(QColor(100, 100, 100), 2))
-                    painter.drawRect(rect)
+            # Use search helper for search highlights
+            self.search_helper.render_search_highlights(painter, i, self.scale)
             painter.end()
             lbl.setPixmap(QPixmap.fromImage(img))
 
@@ -567,108 +544,33 @@ class PDFViewer(QScrollArea):
     def update_zoom_label(self):
         self.zoom_label.setText(f'{int(self.scale * 100)}%')
 
+    # Search methods delegated to helper
     def on_search_text_changed(self, text):
-        if not text.strip():
-            self.clear_search_highlights()
-            self.search_results = []
-            self.current_search_index = 0
-            return
+        self.search_helper.on_search_text_changed(text)
 
     def search_in_pdf(self, text):
-        if not self.pdf_doc or not text.strip():
-            return
-        self.search_results = []
-        for page_num in range(len(self.pdf_doc)):
-            page = self.pdf_doc.load_page(page_num)
-            text_instances = page.search_for(text)
-            for inst in text_instances:
-                self.search_results.append((page_num, inst))
-        if self.search_results:
-            self.highlight_search_results()
-            self.current_search_index = 0
-            self.go_to_search_result(0)
+        self.search_helper.search_in_pdf(text)
 
     def highlight_search_results(self):
-        if not self.search_results:
-            return
-        for page_num, rect in self.search_results:
-            if page_num not in self.search_highlights:
-                self.search_highlights[page_num] = []
-            self.search_highlights[page_num].append(rect)
-        self.refresh_highlights()
+        self.search_helper.highlight_search_results()
 
     def clear_search_highlights(self):
-        if hasattr(self, 'search_highlights'):
-            self.search_highlights.clear()
-        if hasattr(self, 'current_highlights'):
-            self.current_highlights.clear()
-        self.current_highlight = None
-        self.refresh_highlights()
+        self.search_helper.clear_search_highlights()
 
     def find_next(self):
-        # If no search results yet, trigger a new search
-        if not self.search_results:
-            search_text = self.search_input.text().strip()
-            if search_text:
-                self.clear_search_highlights()  # Clear previous highlights
-                self.search_in_pdf(search_text)
-            return
-        
-        if self.search_results:
-            self.current_search_index = (self.current_search_index + 1) % len(self.search_results)
-            self.go_to_search_result(self.current_search_index)
+        self.search_helper.find_next()
 
     def find_previous(self):
-        # If no search results yet, trigger a new search
-        if not self.search_results:
-            search_text = self.search_input.text().strip()
-            if search_text:
-                self.clear_search_highlights()  # Clear previous highlights
-                self.search_in_pdf(search_text)
-            return
-        
-        if self.search_results:
-            self.current_search_index = (self.current_search_index - 1) % len(self.search_results)
-            self.go_to_search_result(self.current_search_index)
+        self.search_helper.find_previous()
 
     def go_to_search_result(self, index):
-        if 0 <= index < len(self.search_results):
-            # Clear previous current highlight
-            if self.current_highlight:
-                self.remove_current_highlight()
-            
-            page_num, rect = self.search_results[index]
-            # Scroll to the page
-            if page_num < len(self.page_labels):
-                self.ensureWidgetVisible(self.page_labels[page_num])
-                # Highlight current result with orange color
-                self.highlight_current_result(page_num, rect)
+        self.search_helper.go_to_search_result(index)
 
     def highlight_current_result(self, page_num, rect):
-        # Store current highlight info
-        self.current_highlight = (page_num, rect)
-        
-        # Create a separate highlight for current result
-        if 'current_highlights' not in self.__dict__:
-            self.current_highlights = {}
-        if page_num not in self.current_highlights:
-            self.current_highlights[page_num] = []
-        self.current_highlights[page_num].append(rect)
-        
-        self.refresh_highlights()
+        self.search_helper.highlight_current_result(page_num, rect)
 
     def remove_current_highlight(self):
-        if self.current_highlight and hasattr(self, 'current_highlights'):
-            page_num, rect = self.current_highlight
-            if page_num in self.current_highlights:
-                try:
-                    self.current_highlights[page_num].remove(rect)
-                    if not self.current_highlights[page_num]:
-                        del self.current_highlights[page_num]
-                    self.refresh_highlights()
-                except ValueError:
-                    pass
-            self.current_highlight = None
+        self.search_helper.remove_current_highlight()
     
     def flash_search_highlight(self, page_num, rect):
         # Temporary highlight to show current search result
@@ -693,15 +595,9 @@ class PDFViewer(QScrollArea):
     def clear_all_data(self):
         self.word_highlights.clear()
         self.last_compared_area.clear()
-        self.char_data.clear()
+        self.char_data = []
         self.raw_text = ''
-        self.pending_selection_rect = None
-        self.search_results = []
-        self.current_search_index = 0
-        self.search_highlights = {}
-        self.current_highlight = None
-        if hasattr(self, 'current_highlights'):
-            self.current_highlights.clear()
+        self.search_helper.clear_all_search_data()
         for lbl in self.page_labels:
             lbl.clear_selection()
         if hasattr(self, 'drop_label'):

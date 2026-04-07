@@ -56,6 +56,7 @@ class MdiMainWindow(QMainWindow):
         self.tool_definitions = []
         self.current_tool_widget = None
         self.current_tool_key = None
+        self.tool_cache = {}  # Cache for tool widgets
 
         self.sidebar = self.create_sidebar()
         self.main_layout.addWidget(self.sidebar)
@@ -293,24 +294,29 @@ class MdiMainWindow(QMainWindow):
     def open_tool(self, tool_key):
         tool_definition = self.get_tool_definition(tool_key)
         if not tool_definition:
-            QMessageBox.warning(self, '오류', '선택한 도구 정보를 찾을 수 없습니다.')
+            QMessageBox.warning(self, 'Error', 'Selected tool information not found.')
             return
         
         # If the same tool is already active, do nothing
         if self.current_tool_key == tool_key:
             return
         
-        # Clear current tool if exists
+        # Hide current tool if exists
         if self.current_tool_widget:
-            self.tool_container_layout.removeWidget(self.current_tool_widget)
-            self.current_tool_widget.deleteLater()
-            self.current_tool_widget = None
+            self.current_tool_widget.hide()
         
-        # Create and set new tool
-        new_tool = tool_definition['factory']()
+        # Get or create tool widget from cache
+        if tool_key not in self.tool_cache:
+            new_tool = tool_definition['factory']()
+            self.tool_cache[tool_key] = new_tool
+            self.tool_container_layout.addWidget(new_tool)
+        else:
+            new_tool = self.tool_cache[tool_key]
+        
+        # Show the new tool
+        new_tool.show()
         self.current_tool_widget = new_tool
         self.current_tool_key = tool_key
-        self.tool_container_layout.addWidget(new_tool)
         
         # Update header and sidebar
         self.header_title.setText(tool_definition['window_title'])

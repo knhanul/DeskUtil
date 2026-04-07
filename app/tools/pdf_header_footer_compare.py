@@ -7,12 +7,13 @@ import fitz
 from PyQt6.QtCore import QRect, QTimer, Qt
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.tools.pdf_compare import LoadingOverlay
+from app.common.pdf_search_helper import PDFSearchHelper
 
 
 # ──────────────────────────────────────────────────────────
@@ -113,6 +114,10 @@ class HeaderFooterLabel(QLabel):
         super().mouseReleaseEvent(event)
 
     # --- 페인트: 제외 영역 오버레이 ---
+    def clear_selection(self):
+        """Clear selection state - placeholder for compatibility"""
+        pass
+
     def paintEvent(self, event):
         super().paintEvent(event)
         pix = self.pixmap()
@@ -187,7 +192,7 @@ class HFViewer(QScrollArea):
         self.fit_width_btn.setStyleSheet('font-size: 10px;')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
 
-        self.fit_page_btn = QPushButton('페이지')
+        self.fit_page_btn = QPushButton('Página')
         self.fit_page_btn.setObjectName('toolbarBtn')
         self.fit_page_btn.setFixedHeight(30)
         self.fit_page_btn.setStyleSheet('font-size: 10px;')
@@ -197,21 +202,20 @@ class HFViewer(QScrollArea):
         self.zoom_label.setObjectName('toolbarLabel')
         self.zoom_label.setFixedWidth(50)
 
-        self.prev_diff_btn = QPushButton('◀ 이전')
-        self.prev_diff_btn.setObjectName('toolbarBtn')
-        self.prev_diff_btn.setFixedHeight(30)
-        self.prev_diff_btn.setStyleSheet('font-size: 10px;')
-        self.prev_diff_btn.clicked.connect(self.goto_prev_diff)
-
-        self.next_diff_btn = QPushButton('다음 ▶')
-        self.next_diff_btn.setObjectName('toolbarBtn')
-        self.next_diff_btn.setFixedHeight(30)
-        self.next_diff_btn.setStyleSheet('font-size: 10px;')
-        self.next_diff_btn.clicked.connect(self.goto_next_diff)
-
-        self.diff_counter_lbl = QLabel('')
-        self.diff_counter_lbl.setObjectName('toolbarLabel')
-        self.diff_counter_lbl.setFixedWidth(90)
+        # Initialize search helper
+        self.search_helper = PDFSearchHelper(self)
+        
+        # Setup search UI using helper
+        search_input, find_prev_btn, find_next_btn, search_count_label = self.search_helper.setup_search_ui(tb)
+        
+        # Store references for compatibility
+        self.search_input = search_input
+        self.find_prev_btn = find_prev_btn
+        self.find_next_btn = find_next_btn
+        
+        # Set Korean UI text
+        self.search_helper.set_placeholder_text('Search...')
+        self.search_helper.set_button_text('Prev', 'Next')
 
         tb.addWidget(self.zoom_in_btn)
         tb.addWidget(self.zoom_out_btn)
@@ -219,9 +223,6 @@ class HFViewer(QScrollArea):
         tb.addWidget(self.fit_page_btn)
         tb.addWidget(self.zoom_label)
         tb.addSpacing(16)
-        tb.addWidget(self.prev_diff_btn)
-        tb.addWidget(self.diff_counter_lbl)
-        tb.addWidget(self.next_diff_btn)
         tb.addStretch()
 
         # 스크롤 영역
@@ -247,14 +248,38 @@ class HFViewer(QScrollArea):
         self.open_pdf_btn.clicked.connect(self.open_pdf_via_dialog)
         self.vbox.addWidget(self.open_pdf_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        # 차이점 네비게이션
-        self.diff_pages = []       # [(page, y), ...]  차이점 발생 위치
-        self.diff_index = -1
-
     def set_parent_tool(self, tool):
         self.parent_tool = tool
 
-    # ─── PDF 로드 ───
+    # Search methods delegated to helper
+    def on_search_text_changed(self, text):
+        self.search_helper.on_search_text_changed(text)
+
+    def search_in_pdf(self, text):
+        self.search_helper.search_in_pdf(text)
+
+    def highlight_search_results(self):
+        self.search_helper.highlight_search_results()
+
+    def clear_search_highlights(self):
+        self.search_helper.clear_search_highlights()
+
+    def find_next(self):
+        self.search_helper.find_next()
+
+    def find_previous(self):
+        self.search_helper.find_previous()
+
+    def go_to_search_result(self, index):
+        self.search_helper.go_to_search_result(index)
+
+    def highlight_current_result(self, page_num, rect):
+        self.search_helper.highlight_current_result(page_num, rect)
+
+    def remove_current_highlight(self):
+        self.search_helper.remove_current_highlight()
+
+    # PDF loading methods로드 ───
     def load_pdf(self, path):
         try:
             self.pdf_doc = fitz.open(path)
@@ -369,6 +394,8 @@ class HFViewer(QScrollArea):
                     rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale),
                                  int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
                     painter.fillRect(rect, color)
+            # Use search helper for search highlights
+            self.search_helper.render_search_highlights(painter, i, self.scale)
             painter.end()
             lbl.setPixmap(QPixmap.fromImage(img))
 
@@ -474,66 +501,23 @@ class HFViewer(QScrollArea):
         self.zoom_label.setText(f'{int(self.scale * 100)}%')
         self.reload_pages()
 
-    # ─── 차이점 네비게이션 ───
-    def goto_prev_diff(self):
-        if not self.diff_pages:
-            return
-        self.diff_index = (self.diff_index - 1) % len(self.diff_pages)
-        self._scroll_to_diff()
-
-    def goto_next_diff(self):
-        if not self.diff_pages:
-            return
-        self.diff_index = (self.diff_index + 1) % len(self.diff_pages)
-        self._scroll_to_diff()
-
-    def _scroll_to_diff(self):
-        if not (0 <= self.diff_index < len(self.diff_pages)):
-            return
-        page_num, y_pos = self.diff_pages[self.diff_index]
-        target_y = 0
-        for i in range(min(page_num, len(self.page_labels))):
-            target_y += self.page_labels[i].height() + self.vbox.spacing()
-        target_y += int(y_pos * self.scale) - 80
-        self.verticalScrollBar().setValue(max(0, target_y))
-        self._update_diff_counter()
-
-    def _update_diff_counter(self):
-        total = len(self.diff_pages)
-        cur = (self.diff_index + 1) if total > 0 and self.diff_index >= 0 else 0
-        self.diff_counter_lbl.setText(f'{cur} / {total}')
-
-    def get_current_diff_index_from_scroll(self):
-        """현재 스크롤 위치에서 가장 가까운 diff 인덱스 반환"""
-        if not self.diff_pages:
-            return -1
-        scroll_y = self.verticalScrollBar().value()
-        # 현재 스크롤에 해당하는 페이지 찾기
-        current_y = 0
-        for page_num, lbl in enumerate(self.page_labels):
-            page_height = lbl.height() + self.vbox.spacing()
-            if current_y + page_height > scroll_y:
-                # 이 페이지에서 어떤 diff가 보이는지 찾기
-                relative_y = (scroll_y - current_y) / self.scale
-                closest_idx = -1
-                min_distance = float('inf')
-                for idx, (p, y) in enumerate(self.diff_pages):
-                    if p == page_num:
-                        dist = abs(y - relative_y)
-                        if dist < min_distance:
-                            min_distance = dist
-                            closest_idx = idx
-                return closest_idx
-            current_y += page_height
-        return -1
-
-    def scroll_to_diff_index(self, idx):
-        """특정 diff 인덱스로 스크롤"""
-        self.diff_index = idx
-        self._scroll_to_diff()
+    # ─── 초기화 ───
+    def clear_all_data(self):
+        self.word_highlights.clear()
+        self.last_compared_area.clear()
+        self.char_data.clear()
+        self.raw_text = ''
+        self.search_helper.clear_all_search_data()
+        for lbl in self.page_labels:
+            lbl.clear_selection()
+        if hasattr(self, 'drop_label'):
+            self.drop_label.show()
+        if hasattr(self, 'open_pdf_btn'):
+            self.open_pdf_btn.show()
+        self.refresh_highlights()
 
     def get_scroll_anchor(self):
-        """현재 스크롤 위치를 (page, y) 앵커로 변환"""
+        """Convert current scroll position to (page, y) anchor"""
         if not self.page_labels:
             return None
         scroll_y = self.verticalScrollBar().value()
@@ -550,7 +534,7 @@ class HFViewer(QScrollArea):
         return None
 
     def scroll_to_anchor(self, anchor):
-        """(page, y) 앵커 위치로 즉시 스크롤"""
+        """Immediately scroll to (page, y) anchor position"""
         if not anchor:
             return
         page_num, y_pos = anchor
@@ -559,17 +543,6 @@ class HFViewer(QScrollArea):
             target_y += self.page_labels[i].height() + self.vbox.spacing()
         target_y += int(y_pos * self.scale) - 80
         self.verticalScrollBar().setValue(max(0, target_y))
-
-    # ─── 초기화 ───
-    def clear_all_data(self):
-        self.word_highlights.clear()
-        self.last_compared_area.clear()
-        self.char_data.clear()
-        self.raw_text = ''
-        self.diff_pages.clear()
-        self.diff_index = -1
-        self._update_diff_counter()
-        self.refresh_highlights()
 
 
 # ──────────────────────────────────────────────────────────
@@ -812,25 +785,25 @@ class HFCompareWidget(QWidget):
                     continue
                 if tag in ('delete', 'replace'):
                     self._append_compared_area(self.viewer1, i1, i2)
-                    highlight_entire_word(self.viewer1, i1, i2, COLOR_P1, diff_pages1)
                 if tag in ('insert', 'replace'):
                     self._append_compared_area(self.viewer2, j1, j2)
+                if tag in ('delete', 'replace'):
+                    highlight_entire_word(self.viewer1, i1, i2, COLOR_P1, diff_pages1)
+                if tag in ('insert', 'replace'):
                     highlight_entire_word(self.viewer2, j1, j2, COLOR_P2, diff_pages2)
 
-            # 5) 차이점 위치 저장
+            # 5) Store difference locations
             self.viewer1.diff_pages = sorted(set(diff_pages1))
             self.viewer2.diff_pages = sorted(set(diff_pages2))
             self.viewer1.diff_index = -1
             self.viewer2.diff_index = -1
-            self.viewer1._update_diff_counter()
-            self.viewer2._update_diff_counter()
 
-            # 6) 하이라이트 새로고침
+            # 6) Refresh highlights
             self.viewer1.reload_pages()
             self.viewer2.reload_pages()
 
             total = len(self.viewer1.diff_pages) + len(self.viewer2.diff_pages)
-            QMessageBox.information(self, '비교 완료', f'총 {total}개 차이 위치를 찾았습니다.')
+            QMessageBox.information(self, 'Comparison Complete', f'Found {total} difference locations.')
         finally:
             self.loading.stop_animation()
 
@@ -841,9 +814,9 @@ class HFCompareWidget(QWidget):
         if not any(h[0] == info['bbox'] and h[1] == color for h in viewer.word_highlights[page_num]):
             viewer.word_highlights[page_num].append((info['bbox'], color))
 
-    # ─── 초기화 ───
+    # Reset methods
     def request_reset(self):
-        self.loading.start_animation('전체 초기화 중...')
+        self.loading.start_animation('Resetting all data...')
         QApplication.processEvents()
         QTimer.singleShot(300, self._do_reset)
 
