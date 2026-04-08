@@ -56,19 +56,23 @@ class PDFSearchHelper:
         toolbar_layout.addWidget(self.search_count_label)
         
         # Set default Korean text
-        self.set_placeholder_text('Search...')
-        self.set_button_text('Prev', 'Next')
+        self.set_placeholder_text('검색어 입력')
+        self.set_button_text('이전', '이후')
         
         return self.search_input, self.find_prev_btn, self.find_next_btn, self.search_count_label
         
     def on_search_text_changed(self, text):
-        """Handle search text change"""
+        """Handle search text change - search in real-time as user types"""
         if not text.strip():
             self.clear_search_highlights()
             self.search_results = []
             self.current_search_index = 0
             self.update_search_count()
             return
+        
+        # Real-time search: search and highlight as user types
+        self.clear_search_highlights()
+        self.search_in_pdf(text)
             
     def search_in_pdf(self, text):
         """Search for text in PDF"""
@@ -84,8 +88,7 @@ class PDFSearchHelper:
                 
         if self.search_results:
             self.highlight_search_results()
-            self.current_search_index = 0
-            self.go_to_search_result(0)
+            self.current_search_index = -1  # Start at -1, user presses next to go to first
             
         self.update_search_count()
         
@@ -181,31 +184,40 @@ class PDFSearchHelper:
         """Update search result count display"""
         if self.search_count_label:
             total = len(self.search_results)
-            current = (self.current_search_index + 1) if total > 0 else 0
-            self.search_count_label.setText(f'{current}/{total}')
+            if total == 0:
+                self.search_count_label.setText('0/0')
+            elif self.current_search_index < 0:
+                # Results found but none selected yet
+                self.search_count_label.setText(f'0/{total}')
+            else:
+                current = self.current_search_index + 1
+                self.search_count_label.setText(f'{current}/{total}')
             
     def render_search_highlights(self, painter, page_num, scale):
         """Render search highlights for a page"""
-        # Add search highlights in light gray
+        # Add search highlights in yellow (standard search highlight color)
         if page_num in self.search_highlights:
             for bbox in self.search_highlights[page_num]:
                 rect = QRect(int(bbox[0] * scale), int(bbox[1] * scale),
                            int((bbox[2] - bbox[0]) * scale), int((bbox[3] - bbox[1]) * scale))
-                painter.fillRect(rect, QColor(200, 200, 200, 30))
+                # Bright yellow for all search results - more visible
+                painter.fillRect(rect, QColor(255, 255, 0, 100))
                 
-        # Add current result highlight with border box
+        # Add current result highlight with orange border
         if page_num in self.current_highlights:
             for bbox in self.current_highlights[page_num]:
                 rect = QRect(int(bbox[0] * scale), int(bbox[1] * scale),
                            int((bbox[2] - bbox[0]) * scale), int((bbox[3] - bbox[1]) * scale))
-                painter.fillRect(rect, QColor(220, 220, 220, 40))
-                painter.setPen(QPen(QColor(100, 100, 100), 2))
+                # Orange highlight for current result
+                painter.fillRect(rect, QColor(255, 200, 100, 120))
+                # Orange border to clearly show current result
+                painter.setPen(QPen(QColor(255, 140, 0), 2))
                 painter.drawRect(rect)
                 
     def clear_all_search_data(self):
         """Clear all search-related data"""
         self.search_results = []
-        self.current_search_index = 0
+        self.current_search_index = -1  # Reset to -1 (no selection)
         self.search_highlights = {}
         self.current_highlight = None
         if hasattr(self, 'current_highlights'):

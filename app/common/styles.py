@@ -15,8 +15,8 @@ COLOR_BORDER_LIGHT = '#E5E5EA'
 COLOR_HOVER = '#E8E8ED'
 COLOR_ACTIVE = '#D1D1D6'
 
-COLOR_P1 = QColor(255, 255, 0, 140)
-COLOR_P2 = QColor(0, 255, 127, 140)
+COLOR_P1 = QColor(255, 149, 0, 140)  # Orange for PDF1
+COLOR_P2 = QColor(0, 255, 127, 140)  # Green for PDF2
 COLOR_AREA = QColor(0, 120, 255, 15)
 
 # iOS-inspired system blue

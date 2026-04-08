@@ -4,32 +4,11 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
  
-from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, ENABLE_INTERNAL_REPORT, ENABLE_LICENSE_MENU, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
+from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
 from app.tools.document_search_ui import DocumentSearchWidget
 from app.tools.pdf_header_footer_compare import HFCompareWidget
 from app.tools.pdf_compare import PdfCompareWidget
-
-
-class PlaceholderToolWidget(QWidget):
-    def __init__(self, title, message, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(16)
-        card = QFrame()
-        card.setObjectName('cardFrame')
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 24, 24, 24)
-        title_label = QLabel(f"<b style='font-size:18px; color:{COLOR_PRIMARY};'>{title}</b>")
-        message_label = QLabel(message)
-        message_label.setWordWrap(True)
-        message_label.setStyleSheet('font-size:13px; color:#555; line-height:1.6;')
-        card_layout.addWidget(title_label)
-        card_layout.addWidget(message_label)
-        card_layout.addStretch()
-        layout.addWidget(card)
-        layout.addStretch()
 
 
 class MdiMainWindow(QMainWindow):
@@ -244,45 +223,7 @@ class MdiMainWindow(QMainWindow):
                 'singleton': PdfCompareWidget.singleton,
                 'enabled': PdfCompareWidget.enabled,
             },
-            {
-                'key': 'excel_compare',
-                'menu_title': '📊 엑셀 대조',
-                'window_title': '엑셀 데이터 대조',
-                'factory': lambda: PlaceholderToolWidget('엑셀 데이터 대조', '새 메뉴와 도구 파일을 이 구조에 맞춰 추가하면 됩니다.'),
-                'singleton': True,
-                'enabled': False,
-            },
-            {
-                'key': 'log_analyzer',
-                'menu_title': '🔍 로그 분석',
-                'window_title': '로그 분석기',
-                'factory': lambda: PlaceholderToolWidget('로그 분석기', '도구 모듈을 추가하고 register_tools에 등록하면 메뉴가 확장됩니다.'),
-                'singleton': True,
-                'enabled': False,
-            },
         ]
-        if ENABLE_INTERNAL_REPORT:
-            tool_definitions.append(
-                {
-                    'key': 'internal_report',
-                    'menu_title': '🧾 내부 보고서',
-                    'window_title': '내부 보고서',
-                    'factory': lambda: PlaceholderToolWidget('내부 보고서', f'{APP_NAME} 전용 내부 보고서 기능 자리입니다.'),
-                    'singleton': True,
-                    'enabled': False,
-                }
-            )
-        if ENABLE_LICENSE_MENU:
-            tool_definitions.append(
-                {
-                    'key': 'license_purchase',
-                    'menu_title': '💳 License / Purchase',
-                    'window_title': 'License / Purchase',
-                    'factory': lambda: PlaceholderToolWidget('License / Purchase', f'{APP_NAME} 상용 배포용 라이선스 메뉴 자리입니다.'),
-                    'singleton': True,
-                    'enabled': False,
-                }
-            )
         self.tool_definitions = tool_definitions
 
     def get_tool_definition(self, tool_key):

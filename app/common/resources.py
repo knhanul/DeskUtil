@@ -8,8 +8,6 @@ DEVELOPER = SETTINGS['COMPANY_NAME']
 APP_NAME = SETTINGS['APP_NAME']
 COMPANY_NAME = SETTINGS['COMPANY_NAME']
 THEME_COLOR_PRIMARY = SETTINGS['THEME_COLOR_PRIMARY']
-ENABLE_LICENSE_MENU = SETTINGS['ENABLE_LICENSE_MENU']
-ENABLE_INTERNAL_REPORT = SETTINGS['ENABLE_INTERNAL_REPORT']
 
 
 def _runtime_base_path():
@@ -50,4 +48,16 @@ def get_icon_path():
     for candidate in _candidate_paths('icon.ico'):
         if os.path.exists(candidate):
             return candidate
+    return None
+
+
+def get_timer_gif_path():
+    """로딩 다이얼로그용 타이머 GIF 경로 반환"""
+    gif_path = os.path.join(_runtime_base_path(), SETTINGS['ASSET_DIR'], 'nuni_timer.gif')
+    if os.path.exists(gif_path):
+        return gif_path
+    # Fallback to direct assets path
+    fallback_path = os.path.join(SETTINGS['BASE_DIR'], 'assets', 'nuni_timer.gif')
+    if os.path.exists(fallback_path):
+        return fallback_path
     return None

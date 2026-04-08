@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QFrame, QGraphic
 from app.common.resources import get_resource_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.common.pdf_search_helper import PDFSearchHelper
+from app.common.loading_dialog import LoadingDialog
 
 
 class ViewComparisonTextDialog(QDialog):
@@ -69,68 +70,6 @@ class ViewComparisonTextDialog(QDialog):
     def copy_to_clip(self, text):
         QApplication.clipboard().setText(text)
         QMessageBox.information(self, '성공', '텍스트가 클립보드에 복사되었습니다.')
-
-
-class LoadingOverlay(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self.opacity_effect)
-        self.layout = QVBoxLayout(self)
-        self.bg_frame = QFrame()
-        self.bg_frame.setStyleSheet('background-color: rgba(255, 255, 255, 230); border-radius: 20px; border: 1px solid #DCDFE6;')
-        self.bg_frame.setFixedSize(300, 200)
-
-        f_layout = QVBoxLayout(self.bg_frame)
-        self.icon_label = QLabel()
-        logo_path = get_resource_path('posid_logo.png')
-        if os.path.exists(logo_path):
-            self.icon_label.setPixmap(QPixmap(logo_path).scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        else:
-            self.icon_label.setText('⚙️')
-            self.icon_label.setStyleSheet('font-size: 50px; color: #004b93;')
-        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.msg = QLabel('처리 중...')
-        self.msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.msg.setStyleSheet('font-size: 16px; font-weight: bold; color: #333; margin-top: 10px;')
-
-        f_layout.addStretch()
-        f_layout.addWidget(self.icon_label)
-        f_layout.addWidget(self.msg)
-        f_layout.addStretch()
-        self.layout.addStretch()
-        self.layout.addWidget(self.bg_frame, 0, Qt.AlignmentFlag.AlignCenter)
-        self.layout.addStretch()
-        self.hide()
-
-    def start_animation(self, message='처리 중...'):
-        self.msg.setText(f'<b>{message}</b>')
-        self.show()
-        self.setGeometry(self.parent().rect())
-        self.fade_anim = QPropertyAnimation(self.opacity_effect, b'opacity')
-        self.fade_anim.setDuration(400)
-        self.fade_anim.setStartValue(0.7)
-        self.fade_anim.setEndValue(1.0)
-        self.fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self.move_anim = QPropertyAnimation(self.bg_frame, b'pos')
-        self.move_anim.setDuration(1000)
-        center_pos = self.rect().center() - QPoint(self.bg_frame.width() // 2, self.bg_frame.height() // 2)
-        self.move_anim.setStartValue(center_pos + QPoint(0, 40))
-        self.move_anim.setKeyValueAt(0.2, center_pos - QPoint(0, 10))
-        self.move_anim.setKeyValueAt(0.6, center_pos + QPoint(0, 10))
-        self.move_anim.setEndValue(center_pos)
-        self.move_anim.setEasingCurve(QEasingCurve.Type.OutBack)
-        self.anim_group = QParallelAnimationGroup()
-        self.anim_group.addAnimation(self.fade_anim)
-        self.anim_group.addAnimation(self.move_anim)
-        self.anim_group.start()
-
-    def stop_animation(self):
-        if hasattr(self, 'anim_group'):
-            self.anim_group.stop()
-        self.hide()
-        self.opacity_effect.setOpacity(0.0)
 
 
 class SelectableLabel(QLabel):
@@ -220,29 +159,33 @@ class PDFViewer(QScrollArea):
         toolbar_layout.setContentsMargins(8, 4, 8, 4)
         toolbar_layout.setSpacing(8)
         
-        # Zoom controls
+        # Zoom controls - enlarged for visibility
         self.zoom_in_btn = QPushButton('🔍+')
         self.zoom_in_btn.setObjectName('toolbarBtn')
-        self.zoom_in_btn.setFixedSize(30, 30)
-        self.zoom_in_btn.setStyleSheet('font-size: 10px;')
+        self.zoom_in_btn.setFixedSize(50, 34)
+        self.zoom_in_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_in_btn.setToolTip('확대')
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         
         self.zoom_out_btn = QPushButton('🔍-')
         self.zoom_out_btn.setObjectName('toolbarBtn')
-        self.zoom_out_btn.setFixedSize(30, 30)
-        self.zoom_out_btn.setStyleSheet('font-size: 10px;')
+        self.zoom_out_btn.setFixedSize(50, 34)
+        self.zoom_out_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_out_btn.setToolTip('축소')
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         
-        self.fit_width_btn = QPushButton('너비')
+        self.fit_width_btn = QPushButton('너비맞춤')
         self.fit_width_btn.setObjectName('toolbarBtn')
-        self.fit_width_btn.setFixedHeight(30)
-        self.fit_width_btn.setStyleSheet('font-size: 10px;')
+        self.fit_width_btn.setFixedHeight(34)
+        self.fit_width_btn.setStyleSheet('font-size: 12px;')
+        self.fit_width_btn.setToolTip('너비에 맞춤')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
         
-        self.fit_page_btn = QPushButton('페이지')
+        self.fit_page_btn = QPushButton('페이지맞춤')
         self.fit_page_btn.setObjectName('toolbarBtn')
-        self.fit_page_btn.setFixedHeight(30)
-        self.fit_page_btn.setStyleSheet('font-size: 10px;')
+        self.fit_page_btn.setFixedHeight(34)
+        self.fit_page_btn.setStyleSheet('font-size: 12px;')
+        self.fit_page_btn.setToolTip('페이지에 맞춤')
         self.fit_page_btn.clicked.connect(self.fit_to_page)
         
         self.zoom_label = QLabel(f'{int(self.scale * 100)}%')
@@ -251,6 +194,14 @@ class PDFViewer(QScrollArea):
         
         # Initialize search helper
         self.search_helper = PDFSearchHelper(self)
+        
+        # Add zoom controls first
+        toolbar_layout.addWidget(self.zoom_in_btn)
+        toolbar_layout.addWidget(self.zoom_out_btn)
+        toolbar_layout.addWidget(self.fit_width_btn)
+        toolbar_layout.addWidget(self.fit_page_btn)
+        toolbar_layout.addWidget(self.zoom_label)
+        toolbar_layout.addSpacing(16)
         
         # Setup search UI using helper
         search_input, find_prev_btn, find_next_btn, search_count_label = self.search_helper.setup_search_ui(toolbar_layout)
@@ -261,16 +212,9 @@ class PDFViewer(QScrollArea):
         self.find_next_btn = find_next_btn
         
         # Set Korean UI text
-        self.search_helper.set_placeholder_text('Search...')
-        self.search_helper.set_button_text('Prev', 'Next')
+        self.search_helper.set_placeholder_text('검색어 입력')
+        self.search_helper.set_button_text('이전', '이후')
         
-        # Add to toolbar
-        toolbar_layout.addWidget(self.zoom_in_btn)
-        toolbar_layout.addWidget(self.zoom_out_btn)
-        toolbar_layout.addWidget(self.fit_width_btn)
-        toolbar_layout.addWidget(self.fit_page_btn)
-        toolbar_layout.addWidget(self.zoom_label)
-        toolbar_layout.addSpacing(16)
         toolbar_layout.addStretch()
         
         # Scroll area for PDF content
@@ -290,25 +234,32 @@ class PDFViewer(QScrollArea):
         self.pending_selection_rect = None
         
         # Add drop zone indicator when empty
-        self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 버튼을 클릭하여 파일을 선택하세요')
+        self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 아래 버튼을 클릭하여 파일을 선택하세요')
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_label.setStyleSheet('''
             QLabel {
-                color: #8E8E93;
-                font-size: 15px;
+                color: #FFFFFF;
+                font-size: 14px;
                 font-weight: 500;
-                padding: 48px;
-                border: 2px dashed #C6C6C8;
-                border-radius: 16px;
-                background-color: rgba(242, 242, 247, 0.6);
+                padding: 40px 30px;
+                border: 2px dashed #8E8E93;
+                border-radius: 12px;
+                background-color: rgba(120, 120, 128, 0.3);
             }
         ''')
         self.vbox.addWidget(self.drop_label)
 
-        self.open_pdf_btn = QPushButton('PDF 선택')
+        self.open_pdf_btn = QPushButton('📁 PDF 파일 선택')
         self.open_pdf_btn.setObjectName('actionBtn')
-        self.open_pdf_btn.setFixedHeight(38)
-        self.open_pdf_btn.setMinimumWidth(140)
+        self.open_pdf_btn.setFixedHeight(48)
+        self.open_pdf_btn.setMinimumWidth(180)
+        self.open_pdf_btn.setStyleSheet('''
+            QPushButton {
+                font-size: 14px;
+                font-weight: 600;
+                padding: 10px 20px;
+            }
+        ''')
         self.open_pdf_btn.clicked.connect(self.open_pdf_via_dialog)
         self.vbox.addWidget(self.open_pdf_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         
@@ -355,13 +306,13 @@ class PDFViewer(QScrollArea):
                     if hasattr(self, 'drop_label') and self.drop_label.isVisible():
                         self.drop_label.setStyleSheet('''
                             QLabel {
-                                color: #007AFF;
-                                font-size: 15px;
-                                font-weight: 500;
-                                padding: 48px;
+                                color: #FFFFFF;
+                                font-size: 14px;
+                                font-weight: 600;
+                                padding: 40px 30px;
                                 border: 2px dashed #007AFF;
-                                border-radius: 16px;
-                                background-color: rgba(0, 122, 255, 0.06);
+                                border-radius: 12px;
+                                background-color: rgba(0, 122, 255, 0.4);
                             }
                         ''')
                     return
@@ -373,13 +324,13 @@ class PDFViewer(QScrollArea):
         if hasattr(self, 'drop_label') and self.drop_label.isVisible():
             self.drop_label.setStyleSheet('''
                 QLabel {
-                    color: #8E8E93;
-                    font-size: 15px;
+                    color: #FFFFFF;
+                    font-size: 14px;
                     font-weight: 500;
-                    padding: 48px;
-                    border: 2px dashed #C6C6C8;
-                    border-radius: 16px;
-                    background-color: rgba(242, 242, 247, 0.6);
+                    padding: 40px 30px;
+                    border: 2px dashed #8E8E93;
+                    border-radius: 12px;
+                    background-color: rgba(120, 120, 128, 0.3);
                 }
             ''')
     
@@ -663,7 +614,7 @@ class PdfCompareWidget(QWidget):
         
         # Add PDF name label at top with minimal margin
         v2_layout.addWidget(self.lbl_name2)
-        self.lbl_name2.setContentsMargins(8, 2, 8, 0)
+        self.lbl_name2.setContentsMargins(10, 6, 10, 4)
         
         # Add toolbar
         v2_layout.addWidget(self.viewer2.toolbar)
@@ -706,7 +657,7 @@ class PdfCompareWidget(QWidget):
         self.btn_reset_page.setMinimumWidth(130)
         bottom_action_layout.addWidget(self.btn_reset_page)
 
-        self.btn_reset_all = QPushButton('🗑  전체 초기화')
+        self.btn_reset_all = QPushButton('🗑  초기화')
         self.btn_reset_all.setObjectName('resetBtn')
         self.btn_reset_all.setFixedHeight(40)
         self.btn_reset_all.setMinimumWidth(120)
@@ -714,7 +665,6 @@ class PdfCompareWidget(QWidget):
 
         layout.addWidget(bottom_action_bar)
 
-        self.loading = LoadingOverlay(self)
         self.last_s1_norm = ''
         self.last_s2_norm = ''
         self.last_s1_raw = ''
@@ -729,30 +679,41 @@ class PdfCompareWidget(QWidget):
         if not self.viewer1.char_data or not self.viewer2.char_data:
             QMessageBox.warning(self, '경고', '양쪽 비교 영역을 먼저 드래그해주세요.')
             return
-        self.loading.start_animation('비교 분석 중...')
         QApplication.processEvents()
         QTimer.singleShot(100, self.run_comparison)
 
     def request_reset_all(self):
-        self.loading.start_animation('전체 초기화 중...')
         QApplication.processEvents()
         QTimer.singleShot(500, self.reset_all)
 
     def request_reset_page(self):
-        self.loading.start_animation('페이지 초기화 중...')
         QApplication.processEvents()
         QTimer.singleShot(300, self.reset_current_page)
 
     def reset_all(self):
+        loading = LoadingDialog(self, "하이라이트 초기화 중...")
+        loading.show()
+        QApplication.processEvents()
+        
         try:
-            self.viewer1.clear_all_data()
-            self.viewer2.clear_all_data()
+            # 하이라이트만 초기화 (PDF 뷰어는 유지)
+            for viewer in [self.viewer1, self.viewer2]:
+                viewer.word_highlights.clear()
+                viewer.last_compared_area.clear()
+                viewer.diff_pages = []
+                viewer.diff_index = -1
+                viewer.reload_pages()
             self.last_s1_norm = ''
             self.last_s2_norm = ''
         finally:
-            self.loading.stop_animation()
+            loading.close()
+            loading.deleteLater()
 
     def reset_current_page(self):
+        loading = LoadingDialog(self, "페이지 초기화 중...")
+        loading.show()
+        QApplication.processEvents()
+        
         try:
             # Get current visible page for both viewers
             current_page1 = self.get_current_page(self.viewer1)
@@ -767,9 +728,6 @@ class PdfCompareWidget(QWidget):
 
                 if current_page in viewer.word_highlights:
                     del viewer.word_highlights[current_page]
-
-                if current_page in viewer.search_highlights:
-                    del viewer.search_highlights[current_page]
 
                 if hasattr(viewer, 'current_highlights') and current_page in viewer.current_highlights:
                     del viewer.current_highlights[current_page]
@@ -788,9 +746,9 @@ class PdfCompareWidget(QWidget):
             # Refresh highlights to update display
             self.viewer1.refresh_highlights()
             self.viewer2.refresh_highlights()
-            
         finally:
-            self.loading.stop_animation()
+            loading.close()
+            loading.deleteLater()
     
     def get_current_page(self, viewer):
         if not viewer.page_labels:
@@ -821,6 +779,10 @@ class PdfCompareWidget(QWidget):
         return current_page
 
     def run_comparison(self):
+        loading = LoadingDialog(self, "PDF 비교 중...")
+        loading.show()
+        QApplication.processEvents()
+        
         try:
             self.viewer1.last_compared_area.clear()
             self.viewer2.last_compared_area.clear()
@@ -854,7 +816,8 @@ class PdfCompareWidget(QWidget):
                     lbl.clear_selection()
                 viewer.reload_pages()
         finally:
-            self.loading.stop_animation()
+            loading.close()
+            loading.deleteLater()
 
     def show_text_dialog(self):
         if not self.last_s1_norm and not self.last_s2_norm:
@@ -879,12 +842,12 @@ class PdfCompareWidget(QWidget):
         legend_content = QLabel(
             f"<div style='font-size:14px; line-height:1.8;'>"
             f"<div style='margin-bottom:10px;'>"
-            f"<span style='color:rgba(255,255,0,0.6); background:rgba(255,255,0,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
-            f"<b>PDF1 (노란색)</b>: PDF 1에서 삭제되거나 변경된 내용"
+            f"<span style='color:rgba(255,149,0,0.6); background:rgba(255,149,0,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
+            f"<b>PDF1 (주황색)</b>: PDF 1에서 삭제되거나 변경된 내용"
             f"</div>"
             f"<div>"
             f"<span style='color:rgba(0,255,127,0.6); background:rgba(0,255,127,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
-            f"<b>PDF2 (초록색)</b>: PDF 2에서 추가되거나 변경된 내용"
+            f"<b>PDF2 (연두색)</b>: PDF 2에서 추가되거나 변경된 내용"
             f"</div>"
             f"</div>"
         )
@@ -933,12 +896,12 @@ class PdfCompareWidget(QWidget):
         content = QLabel(
             f"<div style='font-size:14px; line-height:1.8;'>"
             f"<div style='margin-bottom:15px;'>"
-            f"<span style='color:rgba(255,255,0,0.6); background:rgba(255,255,0,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
-            f"<b>PDF1 (노란색)</b>: PDF 1에서 삭제되거나 변경된 내용"
+            f"<span style='color:rgba(255,149,0,0.6); background:rgba(255,149,0,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
+            f"<b>PDF1 (주황색)</b>: PDF 1에서 삭제되거나 변경된 내용"
             f"</div>"
             f"<div>"
             f"<span style='color:rgba(0,255,127,0.6); background:rgba(0,255,127,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
-            f"<b>PDF2 (초록색)</b>: PDF 2에서 추가되거나 변경된 내용"
+            f"<b>PDF2 (연두색)</b>: PDF 2에서 추가되거나 변경된 내용"
             f"</div>"
             f"</div>"
         )
@@ -990,8 +953,3 @@ class PdfCompareWidget(QWidget):
             viewer.word_highlights[page_num] = []
         if not any(h[0] == info['bbox'] and h[1] == color for h in viewer.word_highlights[page_num]):
             viewer.word_highlights[page_num].append((info['bbox'], color))
-
-    def resizeEvent(self, event):
-        if self.loading.isVisible():
-            self.loading.setGeometry(self.rect())
-        super().resizeEvent(event)

@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
 )
 
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
-from app.tools.pdf_compare import LoadingOverlay
 from app.common.pdf_search_helper import PDFSearchHelper
+from app.common.loading_dialog import LoadingDialog
 
 
 # ──────────────────────────────────────────────────────────
@@ -176,26 +176,30 @@ class HFViewer(QScrollArea):
 
         self.zoom_in_btn = QPushButton('🔍+')
         self.zoom_in_btn.setObjectName('toolbarBtn')
-        self.zoom_in_btn.setFixedSize(30, 30)
-        self.zoom_in_btn.setStyleSheet('font-size: 10px;')
+        self.zoom_in_btn.setFixedSize(50, 34)
+        self.zoom_in_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_in_btn.setToolTip('확대')
         self.zoom_in_btn.clicked.connect(self.zoom_in)
 
         self.zoom_out_btn = QPushButton('🔍-')
         self.zoom_out_btn.setObjectName('toolbarBtn')
-        self.zoom_out_btn.setFixedSize(30, 30)
-        self.zoom_out_btn.setStyleSheet('font-size: 10px;')
+        self.zoom_out_btn.setFixedSize(50, 34)
+        self.zoom_out_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_out_btn.setToolTip('축소')
         self.zoom_out_btn.clicked.connect(self.zoom_out)
 
-        self.fit_width_btn = QPushButton('너비')
+        self.fit_width_btn = QPushButton('너비맞춤')
         self.fit_width_btn.setObjectName('toolbarBtn')
-        self.fit_width_btn.setFixedHeight(30)
-        self.fit_width_btn.setStyleSheet('font-size: 10px;')
+        self.fit_width_btn.setFixedHeight(34)
+        self.fit_width_btn.setStyleSheet('font-size: 12px;')
+        self.fit_width_btn.setToolTip('너비에 맞춤')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
 
-        self.fit_page_btn = QPushButton('Página')
+        self.fit_page_btn = QPushButton('페이지맞춤')
         self.fit_page_btn.setObjectName('toolbarBtn')
-        self.fit_page_btn.setFixedHeight(30)
-        self.fit_page_btn.setStyleSheet('font-size: 10px;')
+        self.fit_page_btn.setFixedHeight(34)
+        self.fit_page_btn.setStyleSheet('font-size: 12px;')
+        self.fit_page_btn.setToolTip('페이지에 맞춤')
         self.fit_page_btn.clicked.connect(self.fit_to_page)
 
         self.zoom_label = QLabel(f'{int(self.scale * 100)}%')
@@ -204,6 +208,14 @@ class HFViewer(QScrollArea):
 
         # Initialize search helper
         self.search_helper = PDFSearchHelper(self)
+        
+        # Add zoom controls first
+        tb.addWidget(self.zoom_in_btn)
+        tb.addWidget(self.zoom_out_btn)
+        tb.addWidget(self.fit_width_btn)
+        tb.addWidget(self.fit_page_btn)
+        tb.addWidget(self.zoom_label)
+        tb.addSpacing(16)
         
         # Setup search UI using helper
         search_input, find_prev_btn, find_next_btn, search_count_label = self.search_helper.setup_search_ui(tb)
@@ -214,15 +226,9 @@ class HFViewer(QScrollArea):
         self.find_next_btn = find_next_btn
         
         # Set Korean UI text
-        self.search_helper.set_placeholder_text('Search...')
-        self.search_helper.set_button_text('Prev', 'Next')
-
-        tb.addWidget(self.zoom_in_btn)
-        tb.addWidget(self.zoom_out_btn)
-        tb.addWidget(self.fit_width_btn)
-        tb.addWidget(self.fit_page_btn)
-        tb.addWidget(self.zoom_label)
-        tb.addSpacing(16)
+        self.search_helper.set_placeholder_text('검색어 입력')
+        self.search_helper.set_button_text('이전', '이후')
+        
         tb.addStretch()
 
         # 스크롤 영역
@@ -233,18 +239,21 @@ class HFViewer(QScrollArea):
         self.vbox.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.setWidget(self.container)
 
-        self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 버튼을 클릭하여 파일을 선택하세요')
+        self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 아래 버튼을 클릭하여 파일을 선택하세요')
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_label.setStyleSheet(
-            'QLabel { color: #8E8E93; font-size: 15px; font-weight: 500; padding: 48px; '
-            'border: 2px dashed #C6C6C8; border-radius: 16px; background: rgba(242, 242, 247, 0.6); }'
+            'QLabel { color: #FFFFFF; font-size: 14px; font-weight: 500; padding: 40px 30px; '
+            'border: 2px dashed #8E8E93; border-radius: 12px; background: rgba(120, 120, 128, 0.3); }'
         )
         self.vbox.addWidget(self.drop_label)
 
-        self.open_pdf_btn = QPushButton('PDF 선택')
+        self.open_pdf_btn = QPushButton('📁 PDF 파일 선택')
         self.open_pdf_btn.setObjectName('actionBtn')
-        self.open_pdf_btn.setFixedHeight(38)
-        self.open_pdf_btn.setMinimumWidth(140)
+        self.open_pdf_btn.setFixedHeight(48)
+        self.open_pdf_btn.setMinimumWidth(180)
+        self.open_pdf_btn.setStyleSheet(
+            'QPushButton { font-size: 14px; font-weight: 600; padding: 10px 20px; }'
+        )
         self.open_pdf_btn.clicked.connect(self.open_pdf_via_dialog)
         self.vbox.addWidget(self.open_pdf_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
@@ -312,11 +321,23 @@ class HFViewer(QScrollArea):
             for url in event.mimeData().urls():
                 if url.isLocalFile() and url.toLocalFile().lower().endswith('.pdf'):
                     event.acceptProposedAction()
+                    # Highlight drop zone
+                    if hasattr(self, 'drop_label') and self.drop_label.isVisible():
+                        self.drop_label.setStyleSheet(
+                            'QLabel { color: #FFFFFF; font-size: 14px; font-weight: 600; padding: 40px 30px; '
+                            'border: 2px dashed #007AFF; border-radius: 12px; background: rgba(0, 122, 255, 0.4); }'
+                        )
                     return
         event.ignore()
 
     def dragLeaveEvent(self, event):
         super().dragLeaveEvent(event)
+        # Reset drop zone styling
+        if hasattr(self, 'drop_label') and self.drop_label.isVisible():
+            self.drop_label.setStyleSheet(
+                'QLabel { color: #FFFFFF; font-size: 14px; font-weight: 500; padding: 40px 30px; '
+                'border: 2px dashed #8E8E93; border-radius: 12px; background: rgba(120, 120, 128, 0.3); }'
+            )
 
     def dropEvent(self, event: QDropEvent):
         if event.mimeData().hasUrls():
@@ -347,6 +368,14 @@ class HFViewer(QScrollArea):
             self.drop_label.hide()
         if hasattr(self, 'open_pdf_btn'):
             self.open_pdf_btn.hide()
+        # Hide instruction labels when PDF is loaded
+        if self.parent_tool:
+            if self == self.parent_tool.viewer1:
+                if hasattr(self.parent_tool, 'hf_instruction_label1'):
+                    self.parent_tool.hf_instruction_label1.hide()
+            elif self == self.parent_tool.viewer2:
+                if hasattr(self.parent_tool, 'hf_instruction_label2'):
+                    self.parent_tool.hf_instruction_label2.hide()
         for lbl in self.page_labels:
             lbl.setParent(None)
         self.page_labels.clear()
@@ -508,12 +537,24 @@ class HFViewer(QScrollArea):
         self.char_data.clear()
         self.raw_text = ''
         self.search_helper.clear_all_search_data()
+        # Clear page labels
         for lbl in self.page_labels:
-            lbl.clear_selection()
+            lbl.setParent(None)
+        self.page_labels.clear()
+        self.page_base_pixmaps.clear()
+        self.pdf_doc = None
         if hasattr(self, 'drop_label'):
             self.drop_label.show()
         if hasattr(self, 'open_pdf_btn'):
             self.open_pdf_btn.show()
+        # Show instruction labels when PDF is cleared
+        if self.parent_tool:
+            if self == self.parent_tool.viewer1:
+                if hasattr(self.parent_tool, 'hf_instruction_label1'):
+                    self.parent_tool.hf_instruction_label1.show()
+            elif self == self.parent_tool.viewer2:
+                if hasattr(self.parent_tool, 'hf_instruction_label2'):
+                    self.parent_tool.hf_instruction_label2.show()
         self.refresh_highlights()
 
     def get_scroll_anchor(self):
@@ -558,7 +599,6 @@ class HFCompareWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._syncing = False
-        self.loading = LoadingOverlay(self)
         self.last_s1_norm = ''
         self.last_s2_norm = ''
         self.last_s1_raw = ''
@@ -587,6 +627,21 @@ class HFCompareWidget(QWidget):
         self.lbl_name1.setContentsMargins(10, 6, 10, 4)
         l1.addWidget(self.lbl_name1)
         l1.addWidget(self.viewer1.toolbar)
+        
+        # Header/Footer instruction message for PDF1
+        self.hf_instruction_label1 = QLabel(
+            "📜 <b>머릿글/바닥글 제외 설정</b><br>"
+            "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
+            "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
+        )
+        self.hf_instruction_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hf_instruction_label1.setStyleSheet(
+            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
+            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
+        )
+        self.hf_instruction_label1.setContentsMargins(10, 8, 10, 8)
+        l1.addWidget(self.hf_instruction_label1)
+        
         l1.addWidget(self.viewer1, 1)
         ws.addWidget(p1)
 
@@ -599,6 +654,21 @@ class HFCompareWidget(QWidget):
         self.lbl_name2.setContentsMargins(10, 6, 10, 4)
         l2.addWidget(self.lbl_name2)
         l2.addWidget(self.viewer2.toolbar)
+        
+        # Header/Footer instruction message for PDF2
+        self.hf_instruction_label2 = QLabel(
+            "📜 <b>머릿글/바닥글 제외 설정</b><br>"
+            "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
+            "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
+        )
+        self.hf_instruction_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hf_instruction_label2.setStyleSheet(
+            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
+            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
+        )
+        self.hf_instruction_label2.setContentsMargins(10, 8, 10, 8)
+        l2.addWidget(self.hf_instruction_label2)
+        
         l2.addWidget(self.viewer2, 1)
         ws.addWidget(p2)
 
@@ -630,7 +700,7 @@ class HFCompareWidget(QWidget):
 
         bl.addStretch()
 
-        self.btn_reset = QPushButton('🗑  전체 초기화')
+        self.btn_reset = QPushButton('🗑  초기화')
         self.btn_reset.setObjectName('resetBtn')
         self.btn_reset.setFixedHeight(40)
         self.btn_reset.setMinimumWidth(120)
@@ -732,12 +802,15 @@ class HFCompareWidget(QWidget):
         if not self.viewer1.pdf_doc or not self.viewer2.pdf_doc:
             QMessageBox.warning(self, '경고', '양쪽 PDF를 먼저 로드해주세요.')
             return
-        self.loading.start_animation('비교 분석 중...')
         QApplication.processEvents()
         QTimer.singleShot(100, self.run_comparison)
 
     # ─── 비교 실행 (기존 run_comparison과 동일한 SequenceMatcher + 단어 하이라이트) ───
     def run_comparison(self):
+        loading = LoadingDialog(self, "머릿글/바닥글 제외 비교 중...")
+        loading.show()
+        QApplication.processEvents()
+        
         try:
             # 1) 텍스트 추출
             self.viewer1.extract_body_text()
@@ -805,7 +878,8 @@ class HFCompareWidget(QWidget):
             total = len(self.viewer1.diff_pages) + len(self.viewer2.diff_pages)
             QMessageBox.information(self, 'Comparison Complete', f'Found {total} difference locations.')
         finally:
-            self.loading.stop_animation()
+            loading.close()
+            loading.deleteLater()
 
     def _add_hl(self, viewer, info, color):
         page_num = info['page']
@@ -816,21 +890,25 @@ class HFCompareWidget(QWidget):
 
     # Reset methods
     def request_reset(self):
-        self.loading.start_animation('Resetting all data...')
         QApplication.processEvents()
         QTimer.singleShot(300, self._do_reset)
 
     def _do_reset(self):
+        loading = LoadingDialog(self, "하이라이트 초기화 중...")
+        loading.show()
+        QApplication.processEvents()
+        
         try:
-            self.viewer1.clear_all_data()
-            self.viewer2.clear_all_data()
+            # 하이라이트만 초기화 (PDF 뷰어는 유지)
+            for viewer in [self.viewer1, self.viewer2]:
+                viewer.word_highlights.clear()
+                viewer.last_compared_area.clear()
+                viewer.diff_pages = []
+                viewer.diff_index = -1
+                viewer.reload_pages()
             self.last_s1_norm = ''
             self.last_s2_norm = ''
             self.sync_anchor_pairs = []
         finally:
-            self.loading.stop_animation()
-
-    def resizeEvent(self, event):
-        if self.loading.isVisible():
-            self.loading.setGeometry(self.rect())
-        super().resizeEvent(event)
+            loading.close()
+            loading.deleteLater()
