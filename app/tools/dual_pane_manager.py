@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QToolButton,
     QTreeView,
     QVBoxLayout,
@@ -59,18 +60,21 @@ class NavigableTreeView(QTreeView):
         super().keyPressEvent(event)
 
 
-@dataclass
 class PaneWidgets:
-    container: QFrame
-    drive_combo: QComboBox
-    path_edit: QLineEdit
-    filter_edit: QLineEdit
-    tree_view: NavigableTreeView
-    status_label: QLabel
-    model: QStandardItemModel
-    name: str
-    current_path: str = field(default='')
-    all_entries: list = field(default_factory=list)
+    """파일 관리자 패널 위젯 컨테이너"""
+    def __init__(self, container: QFrame, drive_combo: QComboBox, path_edit: QLineEdit,
+                 filter_edit: QLineEdit, tab_widget: 'QTabWidget', status_label: QLabel,
+                 name: str, current_path: str = '', all_entries: list = None):
+        self.container = container
+        self.drive_combo = drive_combo
+        self.path_edit = path_edit
+        self.filter_edit = filter_edit
+        self.tab_widget = tab_widget
+        self.status_label = status_label
+        self.name = name
+        self.current_path = current_path
+        self.all_entries = all_entries if all_entries is not None else []
+        self.tab_models: dict = {}  # 탭 인덱스 -> 모델 매핑
 
 
 class DualPaneManager(QWidget):
@@ -119,27 +123,38 @@ class DualPaneManager(QWidget):
         # Bookmark toolbar
         bookmark_layout = QHBoxLayout()
         bookmark_layout.setSpacing(6)
-        bookmark_label = QLabel('⭐ 즐겨찾기:')
-        bookmark_label.setStyleSheet('font-weight: bold; color: #4A5568;')
-        bookmark_layout.addWidget(bookmark_label)
+
+        # 즐겨찾기 헤더 (+ 아이콘 버튼 포함)
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(4)
+        bookmark_label = QLabel('⭐ 즐겨찾기')
+        bookmark_label.setStyleSheet('font-weight: bold; color: #4A5568; font-size: 13px;')
+        header_layout.addWidget(bookmark_label)
+
+        # + 아이콘 버튼 (즐겨찾기 추가)
+        add_fav_btn = QToolButton()
+        add_fav_btn.setText('✚')
+        add_fav_btn.setToolTip('현재 폴더를 즐겨찾기에 추가')
+        add_fav_btn.setStyleSheet(
+            'QToolButton {'
+            'background-color: #EAF3FF;'
+            'border: 1px solid #9FC3FF;'
+            'border-radius: 10px;'
+            'padding: 2px 6px;'
+            'font-size: 12px;'
+            'color: #007AFF;'
+            'font-weight: bold;'
+            '}'
+            'QToolButton:hover { background-color: #D8E9FF; }'
+        )
+        add_fav_btn.clicked.connect(self._add_bookmark_current)
+        header_layout.addWidget(add_fav_btn)
+        header_layout.addSpacing(8)
+        bookmark_layout.addLayout(header_layout)
 
         self.bookmark_container = QHBoxLayout()
         self.bookmark_container.setSpacing(6)
         bookmark_layout.addLayout(self.bookmark_container, 1)
-
-        add_bookmark_btn = QPushButton('+ 추가')
-        add_bookmark_btn.setStyleSheet(
-            'QPushButton {'
-            'background-color: #EAF3FF;'
-            'border: 1px solid #9FC3FF;'
-            'border-radius: 6px;'
-            'padding: 4px 12px;'
-            'font-size: 12px;'
-            '}'
-            'QPushButton:hover { background-color: #D8E9FF; }'
-        )
-        add_bookmark_btn.clicked.connect(self._add_bookmark_current)
-        bookmark_layout.addWidget(add_bookmark_btn)
         bookmark_layout.addStretch()
 
         root.addLayout(bookmark_layout)
@@ -253,11 +268,96 @@ class DualPaneManager(QWidget):
         filter_row.addWidget(filter_edit, 1)
         layout.addLayout(filter_row)
 
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(['이름', '크기', '유형', '수정일'])
+        # 탭 추가 버튼
+        tab_btn_row = QHBoxLayout()
+        tab_btn_row.setSpacing(8)
+        tab_btn_row.addStretch()
+        add_tab_btn = QPushButton('+ 새 탭')
+        add_tab_btn.setFixedHeight(28)
+        add_tab_btn.setMinimumWidth(70)
+        add_tab_btn.setStyleSheet(
+            'QPushButton {'
+            'background: #007AFF;'
+            'color: white;'
+            'border: none;'
+            'border-radius: 4px;'
+            'padding: 4px 8px;'
+            'font-weight: 600;'
+            'font-size: 11px;'
+            '}'
+            'QPushButton:hover {'
+            'background: #0056D3;'
+            '}'
+        )
+        tab_btn_row.addWidget(add_tab_btn)
+        layout.addLayout(tab_btn_row)
 
+        # 탭 위젯으로 파일 리스트 관리
+        tab_widget = QTabWidget()
+        tab_widget.setObjectName(f'{pane_name.lower()}Tabs')
+        tab_widget.setTabPosition(QTabWidget.TabPosition.North)
+        tab_widget.setDocumentMode(True)
+        tab_widget.setMovable(True)
+        tab_widget.setTabsClosable(True)
+        # 시그널은 PaneWidgets 생성 후에 연결
+
+        layout.addWidget(tab_widget, 1)
+
+        status_label = QLabel('선택: 0개 | 총 용량: 0 B')
+        status_label.setStyleSheet('color: #4A5568; padding: 2px 4px;')
+        layout.addWidget(status_label)
+
+        pane = PaneWidgets(
+            container=container,
+            drive_combo=drive_combo,
+            path_edit=path_edit,
+            filter_edit=filter_edit,
+            tab_widget=tab_widget,
+            status_label=status_label,
+            name=pane_name,
+            current_path='',
+            all_entries=[],
+        )
+
+        self._populate_drives(pane)
+        self._connect_pane_signals(pane)
+        filter_edit.textChanged.connect(lambda text, p=pane: self._apply_filter(p, text))
+
+        # 탭 변경 시그널 연결 (pane 객체 직접 전달)
+        tab_widget.currentChanged.connect(lambda idx, p=pane: self._on_pane_tab_changed(p, idx))
+
+        # 탭 추가 버튼 시그널 연결
+        add_tab_btn.clicked.connect(lambda _checked, p=pane: self._add_file_tab(p, QDir.homePath(), '새 탭'))
+
+        # 기본 탭 추가
+        self._add_file_tab(pane, QDir.homePath(), '홈')
+        return pane
+
+    def _populate_drives(self, pane: PaneWidgets):
+        pane.drive_combo.blockSignals(True)
+        pane.drive_combo.clear()
+        for drive in QDir.drives():
+            path = drive.absoluteFilePath()
+            pane.drive_combo.addItem(path, path)
+        pane.drive_combo.blockSignals(False)
+
+    def _connect_pane_signals(self, pane: PaneWidgets):
+        pane.drive_combo.currentIndexChanged.connect(lambda _idx, p=pane: self._on_drive_changed(p))
+        pane.path_edit.returnPressed.connect(lambda p=pane: self._on_path_entered(p))
+
+        pane.path_edit.installEventFilter(self)
+
+    def _get_current_tree_view(self, pane: PaneWidgets) -> NavigableTreeView | None:
+        """현재 활성 탭의 tree_view 반환"""
+        current_widget = pane.tab_widget.currentWidget()
+        if isinstance(current_widget, NavigableTreeView):
+            return current_widget
+        return None
+
+    def _add_file_tab(self, pane: PaneWidgets, path: str, label: str = None) -> int:
+        """파일 탭 추가"""
+        # 새 트리 뷰 생성
         tree_view = NavigableTreeView()
-        tree_view.setModel(model)
         tree_view.setAlternatingRowColors(True)
         tree_view.setStyleSheet(
             'QTreeView {'
@@ -272,59 +372,58 @@ class DualPaneManager(QWidget):
         tree_view.setItemsExpandable(False)
         tree_view.setUniformRowHeights(True)
         tree_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-
         tree_view.setColumnWidth(0, 280)
         tree_view.setColumnWidth(1, 90)
         tree_view.setColumnWidth(2, 130)
         tree_view.setColumnWidth(3, 170)
 
-        layout.addWidget(tree_view, 1)
+        # 모델 설정
+        model = QStandardItemModel()
+        model.setHorizontalHeaderLabels(['이름', '크기', '유형', '수정일'])
+        tree_view.setModel(model)
 
-        status_label = QLabel('선택: 0개 | 총 용량: 0 B')
-        status_label.setStyleSheet('color: #4A5568; padding: 2px 4px;')
-        layout.addWidget(status_label)
+        # 시그널 연결
+        tree_view.doubleClicked.connect(lambda index, p=pane: self._on_item_double_clicked(p, index))
+        tree_view.on_enter_dir = lambda index, p=pane: self._on_item_double_clicked(p, index)
+        tree_view.on_go_parent = lambda p=pane: self._go_parent(p)
+        tree_view.installEventFilter(self)
+        tree_view.viewport().installEventFilter(self)
 
-        pane = PaneWidgets(
-            container=container,
-            drive_combo=drive_combo,
-            path_edit=path_edit,
-            filter_edit=filter_edit,
-            tree_view=tree_view,
-            status_label=status_label,
-            model=model,
-            name=pane_name,
-            current_path='',
-            all_entries=[],
-        )
-
-        self._populate_drives(pane)
-        self._connect_pane_signals(pane)
-        filter_edit.textChanged.connect(lambda text, p=pane: self._apply_filter(p, text))
-        self._load_directory(pane, QDir.homePath())
-        return pane
-
-    def _populate_drives(self, pane: PaneWidgets):
-        pane.drive_combo.blockSignals(True)
-        pane.drive_combo.clear()
-        for drive in QDir.drives():
-            path = drive.absoluteFilePath()
-            pane.drive_combo.addItem(path, path)
-        pane.drive_combo.blockSignals(False)
-
-    def _connect_pane_signals(self, pane: PaneWidgets):
-        pane.drive_combo.currentIndexChanged.connect(lambda _idx, p=pane: self._on_drive_changed(p))
-        pane.path_edit.returnPressed.connect(lambda p=pane: self._on_path_entered(p))
-        pane.tree_view.doubleClicked.connect(lambda index, p=pane: self._on_item_double_clicked(p, index))
-        pane.tree_view.on_enter_dir = lambda index, p=pane: self._on_item_double_clicked(p, index)
-        pane.tree_view.on_go_parent = lambda p=pane: self._go_parent(p)
-
-        pane.tree_view.installEventFilter(self)
-        pane.tree_view.viewport().installEventFilter(self)
-        pane.path_edit.installEventFilter(self)
-
-        selection_model = pane.tree_view.selectionModel()
+        selection_model = tree_view.selectionModel()
         if selection_model:
             selection_model.selectionChanged.connect(lambda _sel, _desel, p=pane: self._update_status(p))
+
+        # 탭 추가
+        tab_label = label or os.path.basename(path) or path
+        tab_index = pane.tab_widget.addTab(tree_view, tab_label)
+        pane.tab_models[tab_index] = model
+
+        # 디렉토리 로드
+        self._load_directory_to_model(model, path)
+
+        return tab_index
+
+    def _on_pane_tab_changed(self, pane: PaneWidgets, index: int):
+        """패널 탭 변경 시 처리"""
+        if not pane:
+            return
+        if index >= 0 and index in pane.tab_models:
+            # 현재 경로 업데이트
+            tree_view = pane.tab_widget.widget(index)
+            if isinstance(tree_view, NavigableTreeView):
+                model = pane.tab_models[index]
+                # 첫 번째 아이템에서 경로 추출 (parent_path 저장용)
+                pass  # TODO: 경로 추적 로직
+        self._update_status(pane)
+
+    def _close_file_tab(self, pane: PaneWidgets, index: int):
+        """파일 탭 닫기"""
+        if pane.tab_widget.count() <= 1:
+            return  # 마지막 탭은 닫지 않음
+        pane.tab_widget.removeTab(index)
+        # 모델 정리
+        if index in pane.tab_models:
+            del pane.tab_models[index]
 
     def _format_file_size(self, size: int) -> str:
         units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -366,39 +465,23 @@ class DualPaneManager(QWidget):
         if self.right_pane and self.right_pane.current_path:
             self.settings.setValue('last_right_folder', self.right_pane.current_path)
 
-    def _load_directory(self, pane: PaneWidgets, path: str):
+    def _load_directory_to_model(self, model: QStandardItemModel, path: str) -> list:
+        """특정 모델에 디렉토리 내용 로드"""
         if not path or not os.path.isdir(path):
-            return False
+            return []
 
         normalized = os.path.abspath(path)
-        pane.current_path = normalized
-        pane.path_edit.setText(normalized)
-
-        # Save current folder paths
-        self._save_last_folders()
-
-        # Update drive combo
-        drive_text = os.path.splitdrive(normalized)[0]
-        if drive_text:
-            drive_text = drive_text + '\\'
-            combo_index = pane.drive_combo.findData(drive_text)
-            if combo_index >= 0:
-                pane.drive_combo.blockSignals(True)
-                pane.drive_combo.setCurrentIndex(combo_index)
-                pane.drive_combo.blockSignals(False)
-
-        # Load directory contents
-        pane.model.removeRows(0, pane.model.rowCount())
-        pane.all_entries.clear()
+        model.removeRows(0, model.rowCount())
+        all_entries = []
 
         try:
             entries = os.listdir(normalized)
         except PermissionError:
             QMessageBox.warning(self, '접근 거부', f'폴더에 접근할 수 없습니다:\n{normalized}')
-            return False
+            return []
         except Exception as e:
             QMessageBox.warning(self, '오류', f'폴더 읽기 오류:\n{e}')
-            return False
+            return []
 
         # Add parent directory entry
         parent_item = QStandardItem('..')
@@ -406,11 +489,10 @@ class DualPaneManager(QWidget):
         parent_item.setData('parent', Qt.ItemDataRole.UserRole + 1)
         parent_item.setFlags(parent_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         parent_item.setIcon(self.icon_provider.icon(QFileIconProvider.IconType.Folder))
-        pane.model.appendRow([parent_item, QStandardItem(''), QStandardItem('상위 폴더'), QStandardItem('')])
+        model.appendRow([parent_item, QStandardItem(''), QStandardItem('상위 폴더'), QStandardItem('')])
 
         # Store all entries for filtering
         sorted_entries = sorted(entries, key=lambda x: (not os.path.isdir(os.path.join(normalized, x)), x.lower()))
-        pane.all_entries = []
 
         for entry in sorted_entries:
             full_path = os.path.join(normalized, entry)
@@ -440,44 +522,87 @@ class DualPaneManager(QWidget):
                 mtime = datetime.fromtimestamp(stat.st_mtime)
                 date_item = QStandardItem(mtime.strftime('%Y-%m-%d %H:%M'))
 
-                pane.all_entries.append({
+                all_entries.append({
                     'name': entry,
                     'path': full_path,
                     'is_dir': is_dir,
                     'size': stat.st_size if not is_dir else 0,
                     'mtime': stat.st_mtime,
                 })
-                pane.model.appendRow([name_item, size_item, type_item, date_item])
+                model.appendRow([name_item, size_item, type_item, date_item])
             except OSError:
                 continue
 
-        # Apply current filter
-        self._apply_filter(pane, pane.filter_edit.text())
-        self._update_status(pane)
+        return all_entries
+
+    def _load_directory(self, pane: PaneWidgets, path: str):
+        """현재 활성 탭에 디렉토리 로드"""
+        if not path or not os.path.isdir(path):
+            return False
+
+        normalized = os.path.abspath(path)
+        pane.current_path = normalized
+        pane.path_edit.setText(normalized)
+
+        # Save current folder paths
+        self._save_last_folders()
+
+        # Update drive combo
+        drive_text = os.path.splitdrive(normalized)[0]
+        if drive_text:
+            drive_text = drive_text + '\\'
+            combo_index = pane.drive_combo.findData(drive_text)
+            if combo_index >= 0:
+                pane.drive_combo.blockSignals(True)
+                pane.drive_combo.setCurrentIndex(combo_index)
+                pane.drive_combo.blockSignals(False)
+
+        # 현재 활성 탭의 모델 가져와서 로드
+        current_index = pane.tab_widget.currentIndex()
+        if current_index >= 0 and current_index in pane.tab_models:
+            model = pane.tab_models[current_index]
+            pane.all_entries = self._load_directory_to_model(model, path)
+            # 탭 이름 업데이트
+            pane.tab_widget.setTabText(current_index, os.path.basename(path) or path)
+            # 필터 적용 및 상태 업데이트
+            self._apply_filter(pane, pane.filter_edit.text())
+            self._update_status(pane)
         return True
 
     def _apply_filter(self, pane: PaneWidgets, filter_text: str):
+        """현재 활성 탭의 필터 적용"""
+        tree_view = self._get_current_tree_view(pane)
+        if not tree_view:
+            return
+
+        model = tree_view.model()
+        if not isinstance(model, QStandardItemModel):
+            return
+
         if not filter_text.strip():
             # Show all
-            for row in range(pane.model.rowCount()):
-                pane.tree_view.setRowHidden(row, QModelIndex(), False)
+            for row in range(model.rowCount()):
+                tree_view.setRowHidden(row, QModelIndex(), False)
             return
 
         filter_lower = filter_text.lower()
-        for row in range(pane.model.rowCount()):
-            item = pane.model.item(row, 0)
+        for row in range(model.rowCount()):
+            item = model.item(row, 0)
             if not item:
                 continue
             name = item.text().lower()
             # Always show parent directory
             is_hidden = item.data(Qt.ItemDataRole.UserRole + 1) != 'parent' and filter_lower not in name
-            pane.tree_view.setRowHidden(row, QModelIndex(), is_hidden)
+            tree_view.setRowHidden(row, QModelIndex(), is_hidden)
 
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.FocusIn):
-            if self.left_pane and watched in (self.left_pane.tree_view, self.left_pane.tree_view.viewport(), self.left_pane.path_edit):
+            left_tree = self._get_current_tree_view(self.left_pane) if self.left_pane else None
+            right_tree = self._get_current_tree_view(self.right_pane) if self.right_pane else None
+
+            if self.left_pane and watched in ([left_tree, left_tree.viewport() if left_tree else None, self.left_pane.path_edit]):
                 self._set_active_pane(self.left_pane)
-            elif self.right_pane and watched in (self.right_pane.tree_view, self.right_pane.tree_view.viewport(), self.right_pane.path_edit):
+            elif self.right_pane and watched in ([right_tree, right_tree.viewport() if right_tree else None, self.right_pane.path_edit]):
                 self._set_active_pane(self.right_pane)
         return super().eventFilter(watched, event)
 
@@ -499,7 +624,16 @@ class DualPaneManager(QWidget):
     def _on_item_double_clicked(self, pane: PaneWidgets, index):
         if not index.isValid():
             return
-        item = pane.model.itemFromIndex(index)
+
+        tree_view = self._get_current_tree_view(pane)
+        if not tree_view:
+            return
+
+        model = tree_view.model()
+        if not isinstance(model, QStandardItemModel):
+            return
+
+        item = model.itemFromIndex(index)
         if not item:
             return
 
@@ -521,12 +655,20 @@ class DualPaneManager(QWidget):
 
     def _get_selected_paths(self, pane: PaneWidgets) -> list:
         paths = []
-        selection_model = pane.tree_view.selectionModel()
+        tree_view = self._get_current_tree_view(pane)
+        if not tree_view:
+            return paths
+
+        selection_model = tree_view.selectionModel()
         if not selection_model:
             return paths
 
+        model = tree_view.model()
+        if not isinstance(model, QStandardItemModel):
+            return paths
+
         for index in selection_model.selectedRows(0):
-            item = pane.model.itemFromIndex(index)
+            item = model.itemFromIndex(index)
             if not item:
                 continue
             path = item.data(Qt.ItemDataRole.UserRole)
@@ -938,17 +1080,24 @@ class DualPaneManager(QWidget):
         self.settings.setValue('bookmarks', self.bookmarks)
 
     def _update_bookmark_ui(self):
-        # Clear existing buttons
+        # Clear existing widgets
         while self.bookmark_container.count():
             item = self.bookmark_container.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
 
-        # Add bookmark buttons
+        # Add bookmark items with delete button
         for bookmark_path in self.bookmarks:
             if not os.path.exists(bookmark_path):
                 continue
+
+            # 개별 즐겨찾기 컨테이너
+            item_layout = QHBoxLayout()
+            item_layout.setSpacing(2)
+            item_layout.setContentsMargins(0, 0, 0, 0)
+
+            # 폴더명 버튼 (클릭 시 이동)
             btn = QToolButton()
             btn.setText(os.path.basename(bookmark_path) or bookmark_path)
             btn.setToolTip(bookmark_path)
@@ -957,13 +1106,39 @@ class DualPaneManager(QWidget):
                 'background-color: #F7FAFC;'
                 'border: 1px solid #D8DEE6;'
                 'border-radius: 6px;'
-                'padding: 4px 10px;'
+                'padding: 4px 8px;'
                 'font-size: 12px;'
                 '}'
                 'QToolButton:hover { background-color: #EAF3FF; }'
             )
             btn.clicked.connect(lambda checked, p=bookmark_path: self._go_to_bookmark(p))
-            self.bookmark_container.addWidget(btn)
+            item_layout.addWidget(btn)
+
+            # 삭제 버튼 (X)
+            del_btn = QToolButton()
+            del_btn.setText('✕')
+            del_btn.setToolTip('즐겨찾기에서 삭제')
+            del_btn.setStyleSheet(
+                'QToolButton {'
+                'background-color: transparent;'
+                'border: none;'
+                'padding: 2px 4px;'
+                'font-size: 10px;'
+                'color: #9CA3AF;'
+                '}'
+                'QToolButton:hover {'
+                'color: #EF4444;'
+                'background-color: #FEE2E2;'
+                'border-radius: 4px;'
+                '}'
+            )
+            del_btn.clicked.connect(lambda checked, p=bookmark_path: self._remove_bookmark(p))
+            item_layout.addWidget(del_btn)
+
+            # 컨테이너를 위젯으로 감싸서 추가
+            item_widget = QWidget()
+            item_widget.setLayout(item_layout)
+            self.bookmark_container.addWidget(item_widget)
 
         self.bookmark_container.addStretch()
 
