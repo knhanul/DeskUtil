@@ -1,7 +1,7 @@
 import os
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QMovie
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QApplication
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar, QApplication
 from app.common.resources import get_timer_gif_path
 
 
@@ -12,7 +12,7 @@ class LoadingDialog(QDialog):
     사용자에게 현재 작업 진행 중임을 알립니다.
     """
     
-    def __init__(self, parent=None, message="작업 진행 중..."):
+    def __init__(self, parent=None, message="작업 진행 중...", show_progress=False):
         super().__init__(parent)
         self.setWindowTitle("처리 중")
         self.setModal(True)
@@ -21,7 +21,12 @@ class LoadingDialog(QDialog):
             Qt.WindowType.CustomizeWindowHint |
             Qt.WindowType.WindowTitleHint
         )
-        self.setFixedSize(300, 200)
+        
+        # 진행률 표시 여부에 따라 크기 조정
+        if show_progress:
+            self.setFixedSize(300, 240)
+        else:
+            self.setFixedSize(300, 200)
         
         # 레이아웃 설정
         layout = QVBoxLayout(self)
@@ -39,7 +44,6 @@ class LoadingDialog(QDialog):
             self.movie = QMovie(gif_path)
             self.movie.setScaledSize(self.gif_label.size())
             self.gif_label.setMovie(self.movie)
-            self.movie.start()
         else:
             # GIF 파일이 없는 경우 대체 텍스트
             self.gif_label.setText("⏳")
@@ -59,6 +63,28 @@ class LoadingDialog(QDialog):
         """)
         layout.addWidget(self.message_label)
         
+        # 진행률 바 (선택적)
+        if show_progress:
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setTextVisible(True)
+            self.progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid #E0E0E0;
+                    border-radius: 4px;
+                    text-align: center;
+                    height: 20px;
+                }
+                QProgressBar::chunk {
+                    background-color: #007AFF;
+                    border-radius: 4px;
+                }
+            """)
+            layout.addWidget(self.progress_bar)
+        else:
+            self.progress_bar = None
+        
         self.setStyleSheet("""
             QDialog {
                 background-color: white;
@@ -70,7 +96,13 @@ class LoadingDialog(QDialog):
     def set_message(self, message):
         """메시지 텍스트 변경"""
         self.message_label.setText(message)
-        QApplication.processEvents()
+    
+    def set_progress(self, current, total):
+        """진행률 업데이트 (Worker의 progress signal에 연결)"""
+        if self.progress_bar and total > 0:
+            percent = int((current / total) * 100)
+            self.progress_bar.setValue(percent)
+            self.message_label.setText(f"처리 중... ({current}/{total})")
     
     def showEvent(self, event):
         """다이얼로그가 표시될 때 GIF 애니메이션 시작"""
@@ -92,20 +124,19 @@ class LoadingDialog(QDialog):
 
 
 class LoadingManager:
-    """작업 진행 중 로딩 표시 관리 클래스
+    """작업 진행 중 로딩 표시 관리 클래스 (동기 방식용)
     
     사용 예시:
         with LoadingManager(parent_widget, "PDF 비교 중..."):
-            # 시간이 걸리는 작업 수행
-            result = do_long_operation()
+            # 간단한 작업 수행 (무거운 작업은 Async 방식 권장)
+            result = do_simple_operation()
     """
     
-    def __init__(self, parent=None, message="작업 진행 중..."):
-        self.dialog = LoadingDialog(parent, message)
+    def __init__(self, parent=None, message="작업 진행 중...", show_progress=False):
+        self.dialog = LoadingDialog(parent, message, show_progress)
     
     def __enter__(self):
         self.dialog.show()
-        QApplication.processEvents()
         return self.dialog
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -116,3 +147,7 @@ class LoadingManager:
     def update_message(self, message):
         """메시지 업데이트"""
         self.dialog.set_message(message)
+    
+    def set_progress(self, current, total):
+        """진행률 업데이트"""
+        self.dialog.set_progress(current, total)

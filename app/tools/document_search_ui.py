@@ -105,7 +105,7 @@ def list_files_win32(directory: str) -> list[str]:
 
 
 try:
-    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QSize, Qt, QThread, Signal
+    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QSize, Qt, QThread, Signal as PySideSignal
     from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
     from PySide6.QtWidgets import (
         QAbstractItemView,
@@ -139,6 +139,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
+    Signal = PySideSignal
 except ImportError:
     from PyQt6.QtCore import QDir, QModelIndex, QSize, Qt, QThread, pyqtSignal
     from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
@@ -174,7 +175,6 @@ except ImportError:
         QVBoxLayout,
         QWidget,
     )
-
     Signal = pyqtSignal
 
 try:

@@ -1,11 +1,12 @@
 from functools import partial
  
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
+from app.tools.dual_pane_manager import DualPaneManager
 from app.tools.document_search_ui import DocumentSearchWidget
 from app.tools.pdf_header_footer_compare import HFCompareWidget
 from app.tools.pdf_compare import PdfCompareWidget
@@ -36,6 +37,11 @@ class MdiMainWindow(QMainWindow):
         self.current_tool_widget = None
         self.current_tool_key = None
         self.tool_cache = {}  # Cache for tool widgets
+
+        # Blink animation for legend caution button
+        self.blink_timer = QTimer()
+        self.blink_timer.timeout.connect(self.toggle_button_blink)
+        self.blink_state = False
 
         self.sidebar = self.create_sidebar()
         self.main_layout.addWidget(self.sidebar)
@@ -168,7 +174,19 @@ class MdiMainWindow(QMainWindow):
         self.sidebar_brand_title.setVisible(not collapsed)
         self.sidebar_brand_subtitle.setVisible(not collapsed)
         for tool_definition, button in zip(self.tool_definitions, self.sidebar_buttons):
-            button.setText('' if collapsed else tool_definition['menu_title'])
+            button.setProperty('collapsed', collapsed)
+            if collapsed:
+                # Use icon property for collapsed state
+                icon = tool_definition.get('icon', '📄')
+                button.setText(icon)
+                button.setMinimumHeight(50)
+                button.setMaximumHeight(50)
+            else:
+                button.setText(tool_definition['menu_title'])
+                button.setMinimumHeight(0)
+                button.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def populate_sidebar_buttons(self):
         while self.sidebar_button_host.count():
@@ -195,17 +213,38 @@ class MdiMainWindow(QMainWindow):
             button.style().polish(button)
         
         # Show/hide legend caution button based on active tool
-        self.legend_caution_btn.setVisible(tool_key == 'pdf_compare')
+        should_show = tool_key in ('pdf_compare', 'pdf_hf_compare')
+        self.legend_caution_btn.setVisible(should_show)
+        if should_show:
+            self.start_button_blinking()
+        else:
+            self.stop_button_blinking()
+
+    def start_button_blinking(self):
+        self.blink_state = False
+        self.blink_timer.start(500)  # Blink every 500ms
+
+    def stop_button_blinking(self):
+        self.blink_timer.stop()
+        self.legend_caution_btn.setStyleSheet('')  # Reset to default style
+
+    def toggle_button_blink(self):
+        self.blink_state = not self.blink_state
+        if self.blink_state:
+            self.legend_caution_btn.setStyleSheet('QPushButton#actionBtn { background-color: #FFA500; color: white; }')
+        else:
+            self.legend_caution_btn.setStyleSheet('')
 
     def register_tools(self):
         tool_definitions = [
             {
-                'key': DocumentSearchWidget.tool_key,
-                'menu_title': DocumentSearchWidget.tool_name,
-                'window_title': DocumentSearchWidget.window_title,
-                'factory': DocumentSearchWidget,
-                'singleton': DocumentSearchWidget.singleton,
-                'enabled': DocumentSearchWidget.enabled,
+                'key': PdfCompareWidget.tool_key,
+                'menu_title': '📄 PDF 지정 영역 비교',
+                'window_title': PdfCompareWidget.window_title,
+                'factory': PdfCompareWidget,
+                'singleton': PdfCompareWidget.singleton,
+                'enabled': PdfCompareWidget.enabled,
+                'icon': '📄',
             },
             {
                 'key': HFCompareWidget.tool_key,
@@ -214,14 +253,25 @@ class MdiMainWindow(QMainWindow):
                 'factory': HFCompareWidget,
                 'singleton': HFCompareWidget.singleton,
                 'enabled': HFCompareWidget.enabled,
+                'icon': '📄',
             },
             {
-                'key': PdfCompareWidget.tool_key,
-                'menu_title': '📄 PDF 지정 영역 비교',
-                'window_title': PdfCompareWidget.window_title,
-                'factory': PdfCompareWidget,
-                'singleton': PdfCompareWidget.singleton,
-                'enabled': PdfCompareWidget.enabled,
+                'key': DualPaneManager.tool_key,
+                'menu_title': DualPaneManager.tool_name,
+                'window_title': DualPaneManager.window_title,
+                'factory': DualPaneManager,
+                'singleton': DualPaneManager.singleton,
+                'enabled': DualPaneManager.enabled,
+                'icon': '🗂️',
+            },
+            {
+                'key': DocumentSearchWidget.tool_key,
+                'menu_title': DocumentSearchWidget.tool_name,
+                'window_title': DocumentSearchWidget.window_title,
+                'factory': DocumentSearchWidget,
+                'singleton': DocumentSearchWidget.singleton,
+                'enabled': DocumentSearchWidget.enabled,
+                'icon': '🔍',
             },
         ]
         self.tool_definitions = tool_definitions
@@ -242,8 +292,10 @@ class MdiMainWindow(QMainWindow):
         if self.current_tool_key == tool_key:
             return
         
-        # Hide current tool if exists
+        # Hide current tool if exists - trigger closeEvent for thread cleanup
         if self.current_tool_widget:
+            # close()를 호출하여 closeEvent가 실행되도록 함 (스레드 정리)
+            self.current_tool_widget.close()
             self.current_tool_widget.hide()
         
         # Get or create tool widget from cache
@@ -265,7 +317,7 @@ class MdiMainWindow(QMainWindow):
 
     def show_legend_caution_for_active_tool(self):
         # Find the active PDF compare widget
-        if self.current_tool_key == 'pdf_compare' and self.current_tool_widget:
+        if self.current_tool_key in ('pdf_compare', 'pdf_hf_compare') and self.current_tool_widget:
             if hasattr(self.current_tool_widget, 'show_legend_caution_dialog'):
                 self.current_tool_widget.show_legend_caution_dialog()
 
@@ -291,6 +343,19 @@ class MdiMainWindow(QMainWindow):
         layout.addStretch()
         layout.addWidget(button)
         dialog.exec()
+
+    def closeEvent(self, event):
+        """애플리케이션 종료 시 모든 스레드 정리 (좀비 프로세스 방지)"""
+        # 현재 활성화된 도구의 스레드 정리
+        if self.current_tool_widget:
+            self.current_tool_widget.close()
+        
+        # 캐시된 모든 도구 위젯의 스레드 정리
+        for tool_widget in self.tool_cache.values():
+            tool_widget.close()
+        
+        # 이벤트 수락 (창 닫기 진행)
+        event.accept()
 
 
 def run():

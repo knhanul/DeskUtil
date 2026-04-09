@@ -11,3 +11,6 @@ pandas>=2.0.0
 pyxlsb>=1.0.10
 pyhwpx>=0.0.20
 olefile>=0.46
+
+# 파일 관리자 (듀얼 패널) 휴지통 지원
+send2trash>=1.8.0

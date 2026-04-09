@@ -5,15 +5,16 @@ from difflib import SequenceMatcher
 
 import fitz
 from PyQt6.QtCore import QRect, QTimer, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QColor, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QApplication, QCheckBox, QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from app.common.resources import get_timer_gif_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.common.pdf_search_helper import PDFSearchHelper
-from app.common.loading_dialog import LoadingDialog
+from app.common.pdf_compare_worker import CompareThreadManager
 
 
 # ──────────────────────────────────────────────────────────
@@ -148,6 +149,8 @@ class HeaderFooterLabel(QLabel):
 #   - 텍스트 추출: 전체 페이지, Header/Footer 영역 제외
 # ──────────────────────────────────────────────────────────
 class HFViewer(QScrollArea):
+    DEFAULT_EXCLUSION_RATIO = 0.05
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('pdfViewerArea')
@@ -155,8 +158,8 @@ class HFViewer(QScrollArea):
         self.setAcceptDrops(True)
 
         self.scale = 1.5
-        self.header_ratio = 0.0
-        self.footer_ratio = 0.0
+        self.header_ratio = self.DEFAULT_EXCLUSION_RATIO
+        self.footer_ratio = self.DEFAULT_EXCLUSION_RATIO
         self.pdf_doc = None
         self.page_labels = []
         self.page_base_pixmaps = []
@@ -291,6 +294,8 @@ class HFViewer(QScrollArea):
     # PDF loading methods로드 ───
     def load_pdf(self, path):
         try:
+            self.header_ratio = self.DEFAULT_EXCLUSION_RATIO
+            self.footer_ratio = self.DEFAULT_EXCLUSION_RATIO
             self.pdf_doc = fitz.open(path)
             self.reload_pages()
             return True
@@ -394,6 +399,30 @@ class HFViewer(QScrollArea):
             self.page_labels.append(lbl)
             self.page_base_pixmaps.append(base_pixmap)
         self.refresh_highlights()
+        # Header/Footer가 모두 보이도록 스크롤 위치 조정 (완전히 레이아웃된 후)
+        QTimer.singleShot(100, self._ensure_header_footer_visible)
+
+    def _ensure_header_footer_visible(self):
+        """첫 페이지의 Header와 Footer 조절 영역이 모두 보이도록 스크롤"""
+        if not self.page_labels:
+            return
+        
+        # 레이아웃 강제 업데이트
+        self.container.adjustSize()
+        QApplication.processEvents()
+        
+        first_label = self.page_labels[0]
+        page_height = first_label.height()
+        
+        # 페이지 높이가 유효하지 않으면 다시 시도
+        if page_height == 0:
+            QTimer.singleShot(100, self._ensure_header_footer_visible)
+            return
+        
+        # 상단에서 약간 아래로 스크롤 (Header 조절 영역과 본문 일부가 보이도록)
+        # Footer 조절 영역도 보이려면 viewport가 충분히 커야 함
+        scroll_to = int(page_height * 0.05)  # 상단에서 5% 지점
+        self.verticalScrollBar().setValue(scroll_to)
 
     # ─── Header/Footer 변경 콜백 ───
     def on_exclusion_changed(self, header_ratio, footer_ratio):
@@ -604,6 +633,10 @@ class HFCompareWidget(QWidget):
         self.last_s1_raw = ''
         self.last_s2_raw = ''
         self.sync_anchor_pairs = []
+        
+        # Thread manager for async comparison
+        self.compare_manager = None
+        
         self._build_ui()
 
     # ─── UI 구성 ───
@@ -612,9 +645,9 @@ class HFCompareWidget(QWidget):
         root.setSpacing(5)
         root.setContentsMargins(10, 0, 10, 10)
 
-        workspace = QFrame()
-        workspace.setObjectName('workspace')
-        ws = QHBoxLayout(workspace)
+        self.workspace = QFrame()
+        self.workspace.setObjectName('workspace')
+        ws = QHBoxLayout(self.workspace)
         ws.setContentsMargins(0, 0, 0, 0)
         ws.setSpacing(16)
 
@@ -672,7 +705,48 @@ class HFCompareWidget(QWidget):
         l2.addWidget(self.viewer2, 1)
         ws.addWidget(p2)
 
-        root.addWidget(workspace, 1)
+        root.addWidget(self.workspace, 1)
+        
+        # Loading Overlay (Image-based, centered)
+        self.loading_overlay = QLabel(self)
+        self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_overlay.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 255, 255, 0.85);
+                border-radius: 12px;
+            }
+        """)
+        self.loading_overlay.setFixedSize(400, 300)
+        self.loading_overlay.hide()
+        
+        # Loading message label
+        self.loading_message = QLabel("비교중", self.loading_overlay)
+        self.loading_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_message.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                border: none;
+                font-size: 16px;
+                color: #333333;
+                font-weight: 500;
+            }
+        """)
+        self.loading_message.setGeometry(0, 210, 400, 30)
+        
+        # Loading GIF (nuni_timer_w.gif)
+        self.loading_gif = QLabel(self.loading_overlay)
+        self.loading_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_gif.setFixedSize(160, 160)
+        self.loading_gif.setGeometry(120, 30, 160, 160)
+        
+        gif_path = get_timer_gif_path()
+        if gif_path and os.path.exists(gif_path):
+            self.movie = QMovie(gif_path)
+            self.movie.setScaledSize(self.loading_gif.size())
+            self.loading_gif.setMovie(self.movie)
+        else:
+            self.loading_gif.setText("⏳")
+            self.loading_gif.setStyleSheet("font-size: 48px; background: transparent; border: none;")
 
         # 하단 액션 바
         bar = QFrame()
@@ -802,84 +876,234 @@ class HFCompareWidget(QWidget):
         if not self.viewer1.pdf_doc or not self.viewer2.pdf_doc:
             QMessageBox.warning(self, '경고', '양쪽 PDF를 먼저 로드해주세요.')
             return
-        QApplication.processEvents()
-        QTimer.singleShot(100, self.run_comparison)
+        self.start_async_comparison()
 
-    # ─── 비교 실행 (기존 run_comparison과 동일한 SequenceMatcher + 단어 하이라이트) ───
-    def run_comparison(self):
-        loading = LoadingDialog(self, "머릿글/바닥글 제외 비교 중...")
-        loading.show()
-        QApplication.processEvents()
+    # ─── 비교 실행 (비동기 QThread 방식) ───
+    def start_async_comparison(self):
+        """비동기 PDF 비교 시작 (QThread 사용)"""
+        # 1) 텍스트 추출 (메인 스레드에서 먼저 수행 - char_data 준비)
+        self.viewer1.extract_body_text()
+        self.viewer2.extract_body_text()
         
+        if not self.viewer1.char_data and not self.viewer2.char_data:
+            QMessageBox.information(self, '안내', '추출된 텍스트가 없습니다. Header/Footer 제외 범위를 확인해주세요.')
+            return
+        
+        # 2) 하이라이트 초기화
+        self.viewer1.word_highlights.clear()
+        self.viewer2.word_highlights.clear()
+        self.viewer1.last_compared_area.clear()
+        self.viewer2.last_compared_area.clear()
+        self.sync_anchor_pairs = []
+        
+        # 이전 manager 정리
+        if self.compare_manager:
+            self.compare_manager.cleanup()
+        
+        # 3) 로딩 오버레이 표시
+        self.show_loading(True, "비교중")
+        
+        # 4) Thread Manager 생성 및 설정
+        self.compare_manager = CompareThreadManager(self)
+        self.compare_manager.setup_worker(
+            char_data1=self.viewer1.char_data,  # 참조만 전달 (복사는 run()에서)
+            char_data2=self.viewer2.char_data,
+            raw_text1=self.viewer1.raw_text,
+            raw_text2=self.viewer2.raw_text
+        )
+        
+        # 5) Signal 연결
+        self.compare_manager.started.connect(self._on_compare_started)
+        self.compare_manager.progress.connect(self._on_compare_progress)
+        self.compare_manager.result_ready.connect(self._on_compare_result_ready)
+        self.compare_manager.finished.connect(self._on_compare_finished)
+        self.compare_manager.error.connect(self._on_compare_error)
+        
+        # 6) GIF 첫 프레임 렌더링 시간 확보 후 스레드 시작
+        QTimer.singleShot(50, self.compare_manager.start_comparison)
+    
+    def _on_compare_started(self):
+        """비교 시작 시 (스레드가 실제로 시작된 시점)"""
+        pass  # 로딩 다이얼로그는 이미 표시됨
+    
+    def _on_compare_progress(self, current, total):
+        """진행률 업데이트 (오버레이 메시지 업데이트)"""
+        if total > 0:
+            percent = int((current / total) * 100)
+            self.loading_message.setText(f"비교 중... ({percent}%)")
+    
+    def _on_compare_result_ready(self, result: dict):
+        """Worker 결과를 받아 UI 업데이트 (메인 스레드)"""
         try:
-            # 1) 텍스트 추출
-            self.viewer1.extract_body_text()
-            self.viewer2.extract_body_text()
-
-            if not self.viewer1.char_data and not self.viewer2.char_data:
-                QMessageBox.information(self, '안내', '추출된 텍스트가 없습니다. Header/Footer 제외 범위를 확인해주세요.')
-                return
-
-            # 2) 하이라이트 초기화
-            self.viewer1.word_highlights.clear()
-            self.viewer2.word_highlights.clear()
-            self.viewer1.last_compared_area.clear()
-            self.viewer2.last_compared_area.clear()
-            self.sync_anchor_pairs = []
-
-            # 3) 정규화 문자열
-            self.last_s1_norm = ''.join(d['char'] for d in self.viewer1.char_data)
-            self.last_s2_norm = ''.join(d['char'] for d in self.viewer2.char_data)
-            self.last_s1_raw = self.viewer1.raw_text
-            self.last_s2_raw = self.viewer2.raw_text
-
-            # 4) SequenceMatcher 비교
-            matcher = SequenceMatcher(None, self.last_s1_norm, self.last_s2_norm, autojunk=False)
-
-            diff_pages1 = []
-            diff_pages2 = []
-
-            def highlight_entire_word(viewer, start_idx, end_idx, color, diff_pages):
-                word_ids = set()
-                for i in range(start_idx, end_idx):
-                    word_ids.add(viewer.char_data[i]['word_id'])
-                for ch in viewer.char_data:
-                    if ch['word_id'] in word_ids:
-                        self._add_hl(viewer, ch, color)
-                        y_center = (ch['bbox'][1] + ch['bbox'][3]) / 2
-                        diff_pages.append((ch['page'], y_center))
-
-            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            # 결과 저장
+            self.last_s1_norm = result['s1_norm']
+            self.last_s2_norm = result['s2_norm']
+            self.last_s1_raw = result['s1_raw']
+            self.last_s2_raw = result['s2_raw']
+            
+            # 하이라이트 적용 (일괄 처리)
+            highlights1 = result.get('highlights1', [])
+            highlights2 = result.get('highlights2', [])
+            
+            for hl in highlights1:
+                self._apply_highlight_from_dict(self.viewer1, hl, COLOR_P1)
+            for hl in highlights2:
+                self._apply_highlight_from_dict(self.viewer2, hl, COLOR_P2)
+            
+            # diff_pages 설정
+            self.viewer1.diff_pages = result.get('diff_pages1', [])
+            self.viewer2.diff_pages = result.get('diff_pages2', [])
+            self.viewer1.diff_index = -1
+            self.viewer2.diff_index = -1
+            
+            # Anchor pairs 복원 (동기화용)
+            opcodes = result.get('opcodes', [])
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag == 'equal':
+                    continue
                 left_anchor = self._build_anchor_from_range(self.viewer1, i1, i2)
                 right_anchor = self._build_anchor_from_range(self.viewer2, j1, j2)
                 if left_anchor or right_anchor:
                     self.sync_anchor_pairs.append((left_anchor, right_anchor))
-                if tag == 'equal':
-                    continue
                 if tag in ('delete', 'replace'):
                     self._append_compared_area(self.viewer1, i1, i2)
                 if tag in ('insert', 'replace'):
                     self._append_compared_area(self.viewer2, j1, j2)
-                if tag in ('delete', 'replace'):
-                    highlight_entire_word(self.viewer1, i1, i2, COLOR_P1, diff_pages1)
-                if tag in ('insert', 'replace'):
-                    highlight_entire_word(self.viewer2, j1, j2, COLOR_P2, diff_pages2)
-
-            # 5) Store difference locations
-            self.viewer1.diff_pages = sorted(set(diff_pages1))
-            self.viewer2.diff_pages = sorted(set(diff_pages2))
-            self.viewer1.diff_index = -1
-            self.viewer2.diff_index = -1
-
-            # 6) Refresh highlights
+            
+            # 뷰어 갱신 (최적화: visible 페이지만 우선)
+            self._refresh_viewers_optimized()
+            
+        except Exception:
+            raise
+    
+    def _refresh_viewers_optimized(self):
+        """뷰어 갱신 최적화 - visible 페이지 우선, 나머지는 지연 갱신"""
+        # 현재 visible 페이지 확인
+        visible_pages1 = self._get_visible_pages(self.viewer1)
+        visible_pages2 = self._get_visible_pages(self.viewer2)
+        
+        # Visible 페이지만 즉시 갱신 (사용자가 볼 수 있는 부분)
+        for page_num in visible_pages1:
+            if page_num < len(self.viewer1.page_labels):
+                self.viewer1.page_labels[page_num].update()
+        for page_num in visible_pages2:
+            if page_num < len(self.viewer2.page_labels):
+                self.viewer2.page_labels[page_num].update()
+        
+        # 전체 갱신은 지연 실행 (메인 루프 여유 있을 때)
+        QTimer.singleShot(100, self._deferred_full_refresh)
+    
+    def _get_visible_pages(self, viewer):
+        """현재 뷰포트에 보이는 페이지 번호 목록 반환 (QScrollArea용)"""
+        visible_pages = []
+        if not viewer.page_labels:
+            return visible_pages
+        
+        # QScrollArea의 viewport 기준으로 계산
+        viewport = viewer.viewport()
+        if not viewport:
+            return [0]  # 기본값: 첫 페이지
+        
+        scroll_y = viewer.verticalScrollBar().value()
+        viewport_height = viewport.height()
+        
+        for i, lbl in enumerate(viewer.page_labels):
+            # QLabel의 위치 계산 (스크롤 영역 내 상대 위치)
+            lbl_y = lbl.y() if hasattr(lbl, 'y') else i * 100  # fallback
+            lbl_height = lbl.height() if hasattr(lbl, 'height') else 100
+            
+            # 라벨이 viewport 내에 있는지 체크
+            lbl_top = lbl_y
+            lbl_bottom = lbl_y + lbl_height
+            
+            if lbl_bottom > scroll_y and lbl_top < scroll_y + viewport_height:
+                visible_pages.append(i)
+        
+        return visible_pages if visible_pages else [0]
+    
+    def _deferred_full_refresh(self):
+        """지연된 전체 갱신"""
+        if hasattr(self, 'viewer1') and self.viewer1:
             self.viewer1.reload_pages()
+        if hasattr(self, 'viewer2') and self.viewer2:
             self.viewer2.reload_pages()
+        
+        total = len(self.viewer1.diff_pages) + len(self.viewer2.diff_pages)
+        QMessageBox.information(self, 'Comparison Complete', f'Found {total} difference locations.')
+        # 완료 메시지 후 오버레이 숨김
+        self.show_loading(False)
+    
+    def _on_compare_finished(self):
+        """비교 완료 후 정리"""
+        # 오버레이는 _deferred_full_refresh에서 메시지 표시 후 숨김
+        if self.compare_manager:
+            self.compare_manager.cleanup()
+            self.compare_manager = None
+    
+    def _on_compare_error(self, error_msg: str):
+        """비교 오류 처리"""
+        self.show_loading(False)
+        QMessageBox.critical(self, "비교 오류", f"PDF 비교 중 오류가 발생했습니다:\n{error_msg}")
+        if self.compare_manager:
+            self.compare_manager.cleanup()
+            self.compare_manager = None
+    
+    def _apply_highlight_from_dict(self, viewer, hl_data: dict, color):
+        """Worker에서 전달받은 highlight 데이터를 뷰어에 적용"""
+        page_num = hl_data['page']
+        bbox = hl_data['bbox']
+        
+        if page_num not in viewer.word_highlights:
+            viewer.word_highlights[page_num] = []
+        
+        # 중복 체크 (color 포함)
+        existing_bboxes = [h[0] for h in viewer.word_highlights[page_num]]
+        if bbox not in existing_bboxes:
+            viewer.word_highlights[page_num].append((bbox, color))
+    
+    def run_comparison(self):
+        """동기식 비교 (호환성 유지용)"""
+        self.start_async_comparison()
+    
+    def closeEvent(self, event):
+        """위젯 종료 시 스레드 정리 (좀비 프로세스 방지)"""
+        # 실행 중인 비교 작업이 있으면 정리
+        if self.compare_manager:
+            self.compare_manager.cancel()
+            self.compare_manager.cleanup()
+        
+        super().closeEvent(event)
 
-            total = len(self.viewer1.diff_pages) + len(self.viewer2.diff_pages)
-            QMessageBox.information(self, 'Comparison Complete', f'Found {total} difference locations.')
-        finally:
-            loading.close()
-            loading.deleteLater()
+    def resizeEvent(self, event):
+        """창 크기 변경 시 로딩 오버레이 중앙 정렬"""
+        super().resizeEvent(event)
+        if hasattr(self, 'loading_overlay'):
+            # Center the loading overlay in the widget
+            x = (self.width() - self.loading_overlay.width()) // 2
+            y = (self.height() - self.loading_overlay.height()) // 2
+            self.loading_overlay.move(x, y)
+
+    def show_loading(self, show: bool, message: str = ""):
+        """로딩 오버레이 표시/숨김 및 workspace 활성화/비활성화"""
+        if show:
+            if message:
+                self.loading_message.setText(message)
+            # Center the overlay
+            x = (self.width() - self.loading_overlay.width()) // 2
+            y = (self.height() - self.loading_overlay.height()) // 2
+            self.loading_overlay.move(x, y)
+            self.loading_overlay.show()
+            self.loading_overlay.raise_()
+            if hasattr(self, 'movie') and self.movie:
+                self.movie.start()
+            # Disable workspace to block user input
+            self.workspace.setEnabled(False)
+        else:
+            self.loading_overlay.hide()
+            if hasattr(self, 'movie') and self.movie:
+                self.movie.stop()
+            # Re-enable workspace
+            self.workspace.setEnabled(True)
 
     def _add_hl(self, viewer, info, color):
         page_num = info['page']
@@ -890,25 +1114,87 @@ class HFCompareWidget(QWidget):
 
     # Reset methods
     def request_reset(self):
-        QApplication.processEvents()
-        QTimer.singleShot(300, self._do_reset)
+        """초기화 요청 - show_loading 사용"""
+        self.show_loading(True, "하이라이트 초기화 중...")
+        # GIF 애니메이션이 시작될 시간을 확보 후 단계별 실행
+        QTimer.singleShot(120, lambda: self._do_reset(0))
 
-    def _do_reset(self):
-        loading = LoadingDialog(self, "하이라이트 초기화 중...")
-        loading.show()
-        QApplication.processEvents()
-        
-        try:
-            # 하이라이트만 초기화 (PDF 뷰어는 유지)
-            for viewer in [self.viewer1, self.viewer2]:
-                viewer.word_highlights.clear()
-                viewer.last_compared_area.clear()
-                viewer.diff_pages = []
-                viewer.diff_index = -1
-                viewer.reload_pages()
+    def _do_reset(self, step_index=0):
+        """실제 초기화 작업 수행 (단계별 실행)"""
+        viewers = [self.viewer1, self.viewer2]
+
+        if step_index >= len(viewers):
             self.last_s1_norm = ''
             self.last_s2_norm = ''
             self.sync_anchor_pairs = []
-        finally:
-            loading.close()
-            loading.deleteLater()
+            self.show_loading(False)
+            return
+
+        try:
+            viewer = viewers[step_index]
+            viewer.word_highlights.clear()
+            viewer.last_compared_area.clear()
+            viewer.diff_pages = []
+            viewer.diff_index = -1
+            viewer.reload_pages()
+            QTimer.singleShot(10, lambda: self._do_reset(step_index + 1))
+        except Exception:
+            self.show_loading(False)
+            raise
+
+    def show_legend_caution_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('📋 범례 및 주의사항')
+        dialog.setFixedSize(600, 450)
+        dialog.setStyleSheet(MODERN_QSS)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        # Legend group
+        legend_group = QGroupBox('🎨 하이라이트 범례')
+        legend_group_layout = QVBoxLayout(legend_group)
+        legend_group_layout.setContentsMargins(15, 15, 15, 15)
+        legend_group_layout.setSpacing(10)
+
+        legend_content = QLabel(
+            f"<div style='font-size:14px; line-height:1.8;'>"
+            f"<div style='margin-bottom:10px;'>"
+            f"<span style='color:rgba(255,149,0,0.6); background:rgba(255,149,0,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
+            f"<b>PDF1 (주황색)</b>: PDF 1에서 삭제되거나 변경된 내용"
+            f"</div>"
+            f"<div>"
+            f"<span style='color:rgba(0,255,127,0.6); background:rgba(0,255,127,0.3); padding:6px 12px; border-radius:4px; margin-right:10px;'>■</span>"
+            f"<b>PDF2 (연두색)</b>: PDF 2에서 추가되거나 변경된 내용"
+            f"</div>"
+            f"</div>"
+        )
+        legend_group_layout.addWidget(legend_content)
+        layout.addWidget(legend_group)
+
+        # Caution group
+        caution_group = QGroupBox('⚠️ 주의사항')
+        caution_group_layout = QVBoxLayout(caution_group)
+        caution_group_layout.setContentsMargins(15, 15, 15, 15)
+        caution_group_layout.setSpacing(8)
+
+        caution_content = QLabel(
+            "<div style='font-size:14px; line-height:1.8;'>"
+            "<div style='margin-bottom:12px;'>• <b>정규화 대조</b>: 한글, 영문, 숫자만 비교 대상</div>"
+            "<div style='margin-bottom:12px;'>• <b>띄어쓰기</b>: 띄어쓰기 오류는 검증되지 않음</div>"
+            "<div style='margin-bottom:12px;'>• <b>머릿글/바닥글</b>: 설정된 영역은 비교에서 제외됨</div>"
+            "<div style='margin-bottom:12px;'>• <b>하이라이트</b>: 결과는 한쪽에만 표시될 수 있음</div>"
+            "<div>• <b>정확도</b>: 100% 완벽하지 않을 수 있음, 참고용으로 활용</div>"
+            "</div>"
+        )
+        caution_group_layout.addWidget(caution_content)
+        layout.addWidget(caution_group)
+
+        layout.addStretch()
+
+        close_btn = QPushButton('닫기')
+        close_btn.setObjectName('actionBtn')
+        close_btn.setFixedHeight(38)
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+
+        dialog.exec()
