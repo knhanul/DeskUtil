@@ -1,4 +1,5 @@
 from functools import partial
+import importlib
  
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon, QPixmap
@@ -6,10 +7,6 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, 
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
-from app.tools.dual_pane_manager import DualPaneManager
-from app.tools.document_search_ui import DocumentSearchWidget
-from app.tools.pdf_header_footer_compare import HFCompareWidget
-from app.tools.pdf_compare import PdfCompareWidget
 
 
 class MdiMainWindow(QMainWindow):
@@ -170,9 +167,20 @@ class MdiMainWindow(QMainWindow):
         self.sidebar.setMaximumWidth(width)
 
     def apply_sidebar_collapsed_state(self, collapsed):
-        self.sidebar_logo.setVisible(not collapsed)
-        self.sidebar_brand_title.setVisible(not collapsed)
-        self.sidebar_brand_subtitle.setVisible(not collapsed)
+        if collapsed:
+            # Show small logo only
+            self.sidebar_brand_title.setVisible(False)
+            self.sidebar_brand_subtitle.setVisible(False)
+            logo_path = get_logo_path()
+            if logo_path:
+                self.sidebar_logo.setPixmap(QPixmap(logo_path).scaled(40, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            # Show full logo card
+            self.sidebar_brand_title.setVisible(True)
+            self.sidebar_brand_subtitle.setVisible(True)
+            logo_path = get_logo_path()
+            if logo_path:
+                self.sidebar_logo.setPixmap(QPixmap(logo_path).scaled(144, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         for tool_definition, button in zip(self.tool_definitions, self.sidebar_buttons):
             button.setProperty('collapsed', collapsed)
             if collapsed:
@@ -238,39 +246,43 @@ class MdiMainWindow(QMainWindow):
     def register_tools(self):
         tool_definitions = [
             {
-                'key': PdfCompareWidget.tool_key,
+                'key': 'pdf_compare',
                 'menu_title': '📄 PDF 지정 영역 비교',
-                'window_title': PdfCompareWidget.window_title,
-                'factory': PdfCompareWidget,
-                'singleton': PdfCompareWidget.singleton,
-                'enabled': PdfCompareWidget.enabled,
+                'window_title': 'PDF 지정 영역 비교',
+                'module_path': 'app.tools.pdf_compare',
+                'class_name': 'PdfCompareWidget',
+                'singleton': True,
+                'enabled': True,
                 'icon': '📄',
             },
             {
-                'key': HFCompareWidget.tool_key,
+                'key': 'pdf_hf_compare',
                 'menu_title': '📄 PDF 출력물 비교',
-                'window_title': HFCompareWidget.window_title,
-                'factory': HFCompareWidget,
-                'singleton': HFCompareWidget.singleton,
-                'enabled': HFCompareWidget.enabled,
+                'window_title': 'PDF 출력물 비교',
+                'module_path': 'app.tools.pdf_header_footer_compare',
+                'class_name': 'HFCompareWidget',
+                'singleton': True,
+                'enabled': True,
                 'icon': '📄',
             },
             {
-                'key': DualPaneManager.tool_key,
-                'menu_title': DualPaneManager.tool_name,
-                'window_title': DualPaneManager.window_title,
-                'factory': DualPaneManager,
-                'singleton': DualPaneManager.singleton,
-                'enabled': DualPaneManager.enabled,
+                'key': 'dual_pane_manager',
+                'menu_title': '🗂️ 파일 관리자',
+                'window_title': '파일 관리자',
+                'module_path': 'app.tools.dual_pane_manager',
+                'class_name': 'DualPaneManager',
+                'singleton': True,
+                'enabled': True,
                 'icon': '🗂️',
             },
             {
-                'key': DocumentSearchWidget.tool_key,
-                'menu_title': DocumentSearchWidget.tool_name,
-                'window_title': DocumentSearchWidget.window_title,
-                'factory': DocumentSearchWidget,
-                'singleton': DocumentSearchWidget.singleton,
-                'enabled': DocumentSearchWidget.enabled,
+                'key': 'document_search',
+                'menu_title': '🔍 문서 찾기',
+                'window_title': '문서 찾기',
+                'module_path': 'app.tools.document_search_ui',
+                'class_name': 'DocumentSearchWidget',
+                'singleton': True,
+                'enabled': True,
                 'icon': '🔍',
             },
         ]
@@ -287,30 +299,37 @@ class MdiMainWindow(QMainWindow):
         if not tool_definition:
             QMessageBox.warning(self, 'Error', 'Selected tool information not found.')
             return
-        
+
         # If the same tool is already active, do nothing
         if self.current_tool_key == tool_key:
             return
-        
+
         # Hide current tool if exists - trigger closeEvent for thread cleanup
         if self.current_tool_widget:
             # close()를 호출하여 closeEvent가 실행되도록 함 (스레드 정리)
             self.current_tool_widget.close()
             self.current_tool_widget.hide()
-        
+
         # Get or create tool widget from cache
         if tool_key not in self.tool_cache:
-            new_tool = tool_definition['factory']()
-            self.tool_cache[tool_key] = new_tool
-            self.tool_container_layout.addWidget(new_tool)
+            # Lazy load module
+            try:
+                module = importlib.import_module(tool_definition['module_path'])
+                factory_class = getattr(module, tool_definition['class_name'])
+                new_tool = factory_class()
+                self.tool_cache[tool_key] = new_tool
+                self.tool_container_layout.addWidget(new_tool)
+            except Exception as e:
+                QMessageBox.warning(self, 'Error', f'Failed to load tool: {e}')
+                return
         else:
             new_tool = self.tool_cache[tool_key]
-        
+
         # Show the new tool
         new_tool.show()
         self.current_tool_widget = new_tool
         self.current_tool_key = tool_key
-        
+
         # Update header and sidebar
         self.header_title.setText(tool_definition['window_title'])
         self.set_active_sidebar_button(tool_key)
@@ -323,25 +342,35 @@ class MdiMainWindow(QMainWindow):
 
     def show_info(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle('프로그램 정보')
-        dialog.setFixedSize(420, 320)
+        dialog.setWindowTitle(f'정보 - v{VERSION} ({RELEASE_DATE})')
+        dialog.setFixedSize(600, 500)
         dialog.setStyleSheet(MODERN_QSS)
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(30, 30, 30, 30)
-        img_path = get_logo_path()
-        if img_path:
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+
+        # Add AIResearch.png image (6x size)
+        from configs.settings import SETTINGS
+        ai_research_path = SETTINGS['BASE_DIR'] / 'assets' / 'AIResearch.png'
+        if ai_research_path.exists():
             image = QLabel()
-            image.setPixmap(QPixmap(img_path).scaled(200, 80, Qt.AspectRatioMode.KeepAspectRatio))
+            image.setPixmap(QPixmap(str(ai_research_path)).scaled(900, 480, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             image.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(image)
-        text = QLabel(f"<div style='text-align:center;'><h2 style='color:{COLOR_PRIMARY}; margin-bottom:5px;'>{APP_NAME}</h2><span style='color:#777;'>v{VERSION}</span><br><br><b>배포일:</b> {RELEASE_DATE}<br><b>제작:</b> {DEVELOPER}</div>")
+
+        # Add new title text (two lines, second line bold)
+        text = QLabel("<div style='text-align:center;'><p style='color:#333; font-size:12px; margin:5px 0;'>우체국금융개발원 디지털정보전략실</p><p style='color:#555; font-size:12px; font-weight:600; margin:5px 0;'>sLlm연구모임</p></div>")
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(text)
+
         button = QPushButton('확인')
         button.setObjectName('actionBtn')
-        button.setFixedHeight(38)
+        button.setFixedHeight(24)
+        button.setFixedWidth(60)
+        button.setStyleSheet("QPushButton#actionBtn { padding: 0 10px; font-size: 11px; }")
         button.clicked.connect(dialog.accept)
         layout.addStretch()
-        layout.addWidget(button)
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignCenter)
         dialog.exec()
 
     def closeEvent(self, event):

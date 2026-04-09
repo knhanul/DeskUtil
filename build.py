@@ -6,17 +6,17 @@ from pathlib import Path
 
 TARGETS = {
     'posid': {
-        'app_name': 'Posid 데스크',
+        'app_name': 'nunidesk',
         'asset_dir': 'assets/posid',
         'icon': 'assets/posid/posid_icon.ico',
     },
     'qamate': {
-        'app_name': 'QaMate',
+        'app_name': 'nunidesk',
         'asset_dir': 'assets/qamate',
         'icon': 'assets/qamate/qamate_icon.ico',
     },
     'nuni': {
-        'app_name': 'Nuni',
+        'app_name': 'nunidesk',
         'asset_dir': 'assets/nuni',
         'icon': 'assets/nuni/nuni_icon.ico',
     },
@@ -46,6 +46,14 @@ def build(target_name: str):
         'configs.target_qamate',
         '--hidden-import',
         'configs.target_nuni',
+        '--hidden-import',
+        'app.tools.pdf_compare',
+        '--hidden-import',
+        'app.tools.pdf_header_footer_compare',
+        '--hidden-import',
+        'app.tools.dual_pane_manager',
+        '--hidden-import',
+        'app.tools.document_search_ui',
         str(project_root / 'main.py'),
     ]
     icon_path = project_root / target['icon']
