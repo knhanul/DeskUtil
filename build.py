@@ -59,10 +59,19 @@ def build(target_name: str):
     icon_path = project_root / target['icon']
     if icon_path.exists():
         command[10:10] = ['--icon', str(icon_path)]
+    
+    # 타겟별 에셋 디렉토리 추가
     asset_dir_path = project_root / target['asset_dir']
     if asset_dir_path.exists():
         add_data_arg = f"{asset_dir_path}{separator}{target['asset_dir']}"
         command[10:10] = ['--add-data', add_data_arg]
+    
+    # 공통 assets 폴더 추가 (AIResearch.png 포함)
+    assets_dir = project_root / 'assets'
+    if assets_dir.exists():
+        add_data_arg = f"{assets_dir}{separator}assets"
+        command[10:10] = ['--add-data', add_data_arg]
+    
     subprocess.run(command, cwd=project_root, env=env, check=True)
 
 
