@@ -268,30 +268,6 @@ class DualPaneManager(QWidget):
         filter_row.addWidget(filter_edit, 1)
         layout.addLayout(filter_row)
 
-        # 탭 추가 버튼
-        tab_btn_row = QHBoxLayout()
-        tab_btn_row.setSpacing(8)
-        tab_btn_row.addStretch()
-        add_tab_btn = QPushButton('+ 새 탭')
-        add_tab_btn.setFixedHeight(28)
-        add_tab_btn.setMinimumWidth(70)
-        add_tab_btn.setStyleSheet(
-            'QPushButton {'
-            'background: #007AFF;'
-            'color: white;'
-            'border: none;'
-            'border-radius: 4px;'
-            'padding: 4px 8px;'
-            'font-weight: 600;'
-            'font-size: 11px;'
-            '}'
-            'QPushButton:hover {'
-            'background: #0056D3;'
-            '}'
-        )
-        tab_btn_row.addWidget(add_tab_btn)
-        layout.addLayout(tab_btn_row)
-
         # 탭 위젯으로 파일 리스트 관리
         tab_widget = QTabWidget()
         tab_widget.setObjectName(f'{pane_name.lower()}Tabs')
@@ -300,6 +276,26 @@ class DualPaneManager(QWidget):
         tab_widget.setMovable(True)
         tab_widget.setTabsClosable(True)
         # 시그널은 PaneWidgets 생성 후에 연결
+
+        # 탭 추가 버튼 - 탭 바 오른쪽 코너에 배치
+        add_tab_btn = QPushButton('+')
+        add_tab_btn.setFixedSize(26, 26)
+        add_tab_btn.setStyleSheet(
+            'QPushButton {'
+            'background: #007AFF;'
+            'color: white;'
+            'border: none;'
+            'border-radius: 4px;'
+            'font-weight: bold;'
+            'font-size: 16px;'
+            'padding: 0px 0px 3px 0px;'
+            'margin: 4px 8px 4px 4px;'
+            '}'
+            'QPushButton:hover {'
+            'background: #0056D3;'
+            '}'
+        )
+        tab_widget.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
 
         layout.addWidget(tab_widget, 1)
 
@@ -325,6 +321,7 @@ class DualPaneManager(QWidget):
 
         # 탭 변경 시그널 연결 (pane 객체 직접 전달)
         tab_widget.currentChanged.connect(lambda idx, p=pane: self._on_pane_tab_changed(p, idx))
+        tab_widget.tabCloseRequested.connect(lambda idx, p=pane: self._close_file_tab(p, idx))
 
         # 탭 추가 버튼 시그널 연결
         add_tab_btn.clicked.connect(lambda _checked, p=pane: self._add_file_tab(p, QDir.homePath(), '새 탭'))
@@ -424,6 +421,18 @@ class DualPaneManager(QWidget):
         # 모델 정리
         if index in pane.tab_models:
             del pane.tab_models[index]
+        self._reindex_tab_models(pane)
+        self._update_status(pane)
+
+    def _reindex_tab_models(self, pane: PaneWidgets):
+        """탭 제거 후 tab_models 인덱스 재정렬"""
+        old_models = pane.tab_models
+        pane.tab_models = {}
+        for i in range(pane.tab_widget.count()):
+            if i in old_models:
+                pane.tab_models[i] = old_models[i]
+            elif (i + 1) in old_models:
+                pane.tab_models[i] = old_models[i + 1]
 
     def _format_file_size(self, size: int) -> str:
         units = ['B', 'KB', 'MB', 'GB', 'TB']

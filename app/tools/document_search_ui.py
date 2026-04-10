@@ -1,5 +1,6 @@
 import sys
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import ctypes
@@ -90,7 +91,6 @@ def list_files_win32(directory: str) -> list[str]:
     handle = kernel32.FindFirstFileW(search_path, ctypes.byref(find_data))
     if handle == -1:
         return files
-    
     try:
         while True:
             filename = find_data.cFileName
@@ -104,8 +104,53 @@ def list_files_win32(directory: str) -> list[str]:
     return files
 
 
+def get_windows_known_folder_path(folder_guid: str) -> str | None:
+    """Windows Known Folder 경로 조회 (탐색기 기준 실제 경로)."""
+    if os.name != 'nt':
+        return None
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ('Data1', wintypes.DWORD),
+            ('Data2', wintypes.WORD),
+            ('Data3', wintypes.WORD),
+            ('Data4', ctypes.c_ubyte * 8),
+        ]
+
+    def _guid_from_string(guid_str: str) -> GUID:
+        parts = guid_str.strip('{}').split('-')
+        data1 = int(parts[0], 16)
+        data2 = int(parts[1], 16)
+        data3 = int(parts[2], 16)
+        data4_hex = parts[3] + parts[4]
+        data4 = (ctypes.c_ubyte * 8)(*[int(data4_hex[i:i + 2], 16) for i in range(0, 16, 2)])
+        return GUID(data1, data2, data3, data4)
+
+    try:
+        shell32 = ctypes.windll.shell32
+        ole32 = ctypes.windll.ole32
+
+        guid = _guid_from_string(folder_guid)
+        path_ptr = ctypes.c_wchar_p()
+
+        result = shell32.SHGetKnownFolderPath(
+            ctypes.byref(guid),
+            0,
+            None,
+            ctypes.byref(path_ptr),
+        )
+        if result != 0 or not path_ptr.value:
+            return None
+
+        known_path = path_ptr.value
+        ole32.CoTaskMemFree(path_ptr)
+        return known_path
+    except Exception:
+        return None
+
+
 try:
-    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QSize, Qt, QThread, Signal as PySideSignal
+    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QPoint, QSize, Qt, QThread, Signal as PySideSignal
     from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
     from PySide6.QtWidgets import (
         QAbstractItemView,
@@ -115,12 +160,12 @@ try:
         QGridLayout,
         QHBoxLayout,
         QHeaderView,
-        QLayout,
         QLabel,
         QLineEdit,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QProgressBar,
         QPushButton,
@@ -141,7 +186,7 @@ try:
     )
     Signal = PySideSignal
 except ImportError:
-    from PyQt6.QtCore import QDir, QModelIndex, QSize, Qt, QThread, pyqtSignal
+    from PyQt6.QtCore import QDir, QModelIndex, QPoint, QSize, Qt, QThread, pyqtSignal
     from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
     from PyQt6.QtWidgets import (
         QAbstractItemView,
@@ -151,12 +196,12 @@ except ImportError:
         QGridLayout,
         QHBoxLayout,
         QHeaderView,
-        QLayout,
         QLabel,
         QLineEdit,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QProgressBar,
         QPushButton,
@@ -819,7 +864,7 @@ class DocumentSearchMainWindow(QMainWindow):
         
         # 테이블 속성 설정
         self.result_table.setObjectName("resultTable")
-        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.result_table.setAlternatingRowColors(True)
@@ -834,7 +879,14 @@ class DocumentSearchMainWindow(QMainWindow):
         
         # 선택 변경 시그널 연결
         self.result_table.itemSelectionChanged.connect(self._handle_table_selection_changed)
-        
+
+        # 더블클릭으로 파일 열기
+        self.result_table.itemDoubleClicked.connect(self._on_result_item_double_clicked)
+
+        # 우클릭 컨텍스트 메뉴
+        self.result_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.result_table.customContextMenuRequested.connect(self._show_result_context_menu)
+
         layout.addWidget(self.result_table, 1)
 
         self.result_meta_label = QLabel("0개 문서")
@@ -993,21 +1045,28 @@ class DocumentSearchMainWindow(QMainWindow):
         this_pc_item = QTreeWidgetItem(["내 PC"])
         this_pc_item.setData(0, Qt.ItemDataRole.UserRole + 1, 'group')
 
-        favorite_candidates = [
-            Path.home() / 'Desktop',
-            Path.home() / 'Documents',
-            Path.home() / 'Downloads',
-            Path.home() / 'Pictures',
-        ]
+        # Windows 탐색기의 Known Folder 경로를 우선 사용하여 실제 대상 폴더를 일치시킨다.
+        known_folder_guids = {
+            'Desktop': '{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}',
+            'Documents': '{FDD39AD0-238F-46AF-ADB4-6C85480369C7}',
+            'Downloads': '{374DE290-123F-4565-9164-39C4925E467B}',
+            'Pictures': '{33E28130-4E1E-4676-835A-98395C3BC3BB}',
+        }
+        favorite_candidates: list[tuple[str, Path]] = []
+        for key in ('Desktop', 'Documents', 'Downloads', 'Pictures'):
+            known_path = get_windows_known_folder_path(known_folder_guids[key])
+            candidate = Path(known_path) if known_path else (Path.home() / key)
+            favorite_candidates.append((key, candidate))
+
         labels = {
             'Desktop': '바탕 화면',
             'Documents': '문서',
             'Downloads': '다운로드',
             'Pictures': '사진',
         }
-        for folder in favorite_candidates:
+        for folder_key, folder in favorite_candidates:
             if folder.exists():
-                item = self._create_folder_item(str(folder), labels.get(folder.name, folder.name))
+                item = self._create_folder_item(str(folder), labels.get(folder_key, folder_key))
                 favorites_item.addChild(item)
 
         for drive in QDir.drives():
@@ -1258,6 +1317,66 @@ class DocumentSearchMainWindow(QMainWindow):
             self.result_table.selectRow(0)
             self._handle_table_selection_changed()
     
+    def _on_result_item_double_clicked(self, item) -> None:
+        """검색 결과 더블클릭 시 파일 열기"""
+        file_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if file_path and os.path.exists(file_path):
+            self._open_file(file_path)
+
+    def _show_result_context_menu(self, position: QPoint) -> None:
+        """검색 결과 우클릭 컨텍스트 메뉴 표시"""
+        current_row = self.result_table.currentRow()
+        if current_row < 0:
+            return
+
+        # 현재 행에서 파일 경로 가져오기
+        item = self.result_table.item(current_row, 0)
+        if not item:
+            return
+
+        file_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if not file_path:
+            return
+
+        # 컨텍스트 메뉴 생성
+        menu = QMenu(self)
+
+        # 파일 열기 메뉴
+        open_action = QAction("파일 열기", self)
+        open_action.triggered.connect(lambda: self._open_file(file_path))
+        menu.addAction(open_action)
+
+        # 폴더 열기 메뉴
+        folder_action = QAction("파일 경로 열기", self)
+        folder_action.triggered.connect(lambda: self._open_folder(file_path))
+        menu.addAction(folder_action)
+
+        # 메뉴 표시
+        menu.exec(self.result_table.viewport().mapToGlobal(position))
+
+    def _open_file(self, file_path: str) -> None:
+        """파일 열기"""
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(file_path)
+            else:  # macOS, Linux
+                subprocess.run(['xdg-open', file_path], check=True)
+        except Exception as e:
+            QMessageBox.warning(self, "파일 열기 오류", f"파일을 열 수 없습니다:\n{e}")
+
+    def _open_folder(self, file_path: str) -> None:
+        """파일이 있는 폴더 열기"""
+        try:
+            folder_path = os.path.dirname(file_path)
+            if os.name == 'nt':  # Windows
+                # Use shell=True for proper path handling with special characters
+                import subprocess
+                subprocess.run(f'explorer /select,"{file_path}"', shell=True, check=True)
+            else:  # macOS, Linux
+                subprocess.run(['xdg-open', folder_path], check=True)
+        except Exception as e:
+            QMessageBox.warning(self, "폴더 열기 오류", f"폴더를 열 수 없습니다:\n{e}")
+
     def _rerender_result_items(self, checked: bool | None = None) -> None:
         if not hasattr(self, 'result_table'):
             return
@@ -1284,16 +1403,33 @@ class DocumentSearchMainWindow(QMainWindow):
                 if self.result_table.item(current_row, col) is None:
                     is_snippet_row = True
                     break
-            
-            # 스니펫 행이면 바로 위의 메타데이터 행으로 이동
-            target_row = current_row
+
+            # 같은 데이터의 행 범위 결정
             if is_snippet_row and current_row > 0:
-                target_row = current_row - 1
-                # 메타데이터 행 선택
-                self.result_table.selectRow(target_row)
-            
+                # 스니펫 행을 선택하면 메타데이터 행과 함께 선택
+                meta_row = current_row - 1
+            else:
+                # 메타데이터 행을 선택한 경우
+                meta_row = current_row
+
+            # 다음 행이 스니펫 행인지 확인
+            has_snippet = False
+            if meta_row + 1 < self.result_table.rowCount():
+                for col in range(1, 5):
+                    if self.result_table.item(meta_row + 1, col) is None:
+                        has_snippet = True
+                        break
+
+            # 연결된 행들을 모두 선택 (시그널 임시 차단)
+            self.result_table.itemSelectionChanged.disconnect(self._handle_table_selection_changed)
+            self.result_table.clearSelection()
+            self.result_table.selectRow(meta_row)
+            if has_snippet:
+                self.result_table.selectRow(meta_row + 1)
+            self.result_table.itemSelectionChanged.connect(self._handle_table_selection_changed)
+
             # 대상 행에서 데이터 가져오기
-            item = self.result_table.item(target_row, 0)  # 첫 번째 컬럼에서 데이터 가져오기
+            item = self.result_table.item(meta_row, 0)  # 첫 번째 컬럼에서 데이터 가져오기
             if item:
                 file_path = item.data(Qt.ItemDataRole.UserRole + 1)
                 preview = item.data(Qt.ItemDataRole.UserRole)
@@ -1966,8 +2102,8 @@ class DocumentSearchMainWindow(QMainWindow):
                 border: 0.5px solid #C6C6C8;
                 border-radius: 12px;
                 gridline-color: #E5E5EA;
-                selection-background-color: rgba(0, 122, 255, 0.15);
-                selection-color: #007AFF;
+                selection-background-color: rgba(0, 122, 255, 0.08);
+                selection-color: #333333;
                 alternate-background-color: #F9FAFB;
             }
             QTableWidget#resultTable::item {
@@ -1975,11 +2111,11 @@ class DocumentSearchMainWindow(QMainWindow):
                 border: none;
             }
             QTableWidget#resultTable::item:selected {
-                background: rgba(0, 122, 255, 0.15);
-                color: #007AFF;
+                background: rgba(0, 122, 255, 0.08);
+                color: #333333;
             }
             QTableWidget#resultTable::item:hover {
-                background: rgba(0, 122, 255, 0.08);
+                background: rgba(0, 122, 255, 0.05);
             }
             QTableWidget#resultTable QHeaderView::section {
                 background: #F2F2F7;
