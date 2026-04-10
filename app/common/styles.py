@@ -318,6 +318,25 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
     background-color: rgba(0, 122, 255, 0.15);
 }}
 
+/* ── Close Tool Button ── */
+#closeToolBtn {{
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    padding: 6px 10px;
+    color: {_IOS_RED};
+    font-weight: 600;
+}}
+
+#closeToolBtn:hover {{
+    background-color: rgba(255, 59, 48, 0.08);
+}}
+
+#closeToolBtn:pressed {{
+    background-color: rgba(255, 59, 48, 0.15);
+}}
+
 /* ── PDF Toolbar ── */
 #pdfToolbar {{
     background-color: rgba(248, 248, 250, 0.95);

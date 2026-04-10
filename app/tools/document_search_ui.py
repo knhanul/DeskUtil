@@ -150,12 +150,14 @@ def get_windows_known_folder_path(folder_guid: str) -> str | None:
 
 
 try:
-    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QPoint, QSize, Qt, QThread, Signal as PySideSignal
-    from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
+    from PySide6.QtCore import QDir, QItemSelectionModel, QModelIndex, QPoint, QRectF, QSize, Qt, QThread, Signal as PySideSignal, QAbstractListModel, QSortFilterProxyModel
+    from PySide6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextDocument, QTextOption
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
         QCheckBox,
+        QStyle,
+        QComboBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -173,6 +175,7 @@ try:
         QSizePolicy,
         QSplitter,
         QStackedWidget,
+        QStyledItemDelegate,
         QTabWidget,
         QTableWidget,
         QTableWidgetItem,
@@ -186,18 +189,21 @@ try:
     )
     Signal = PySideSignal
 except ImportError:
-    from PyQt6.QtCore import QDir, QModelIndex, QPoint, QSize, Qt, QThread, pyqtSignal
-    from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPixmap, QImage
+    from PyQt6.QtCore import QDir, QModelIndex, QPoint, QRectF, QSize, Qt, QThread, pyqtSignal, QAbstractListModel, QSortFilterProxyModel
+    from PyQt6.QtGui import QAction, QColor, QFileSystemModel, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextDocument, QTextOption
     from PyQt6.QtWidgets import (
         QAbstractItemView,
         QApplication,
         QCheckBox,
+        QStyle,
+        QComboBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
         QHeaderView,
         QLabel,
         QLineEdit,
+        QListView,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -209,6 +215,7 @@ except ImportError:
         QSizePolicy,
         QSplitter,
         QStackedWidget,
+        QStyledItemDelegate,
         QTabWidget,
         QTableWidget,
         QTableWidgetItem,
@@ -313,6 +320,518 @@ class CheckableFileSystemModel(QFileSystemModel):
                 continue
             collapsed.append(normalized)
         return collapsed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Document Search Result Model / Proxy / Delegate Classes (QListView-based)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Custom Roles for DocumentResultListModel
+FileNameRole = Qt.ItemDataRole.UserRole + 10
+FilePathRole = Qt.ItemDataRole.UserRole + 11
+SnippetRole = Qt.ItemDataRole.UserRole + 12
+PreviewRole = Qt.ItemDataRole.UserRole + 13
+CreatedAtRole = Qt.ItemDataRole.UserRole + 14
+ModifiedAtRole = Qt.ItemDataRole.UserRole + 15
+FileSizeRole = Qt.ItemDataRole.UserRole + 16
+FileKindRole = Qt.ItemDataRole.UserRole + 17
+SortTimestampRole = Qt.ItemDataRole.UserRole + 18
+RawPayloadRole = Qt.ItemDataRole.UserRole + 19
+SearchQueryRole = Qt.ItemDataRole.UserRole + 20
+IncludeSnippetRole = Qt.ItemDataRole.UserRole + 21
+
+
+class DocumentResultListModel(QAbstractListModel):
+    """문서 검색 결과 리스트 모델 - payload 리스트 기반"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._items: list[dict[str, str]] = []
+        self._search_query: str = ""
+        self._include_snippet: bool = True
+
+    def set_items(self, items: list[dict[str, str]]) -> None:
+        """전체 아이템 교체"""
+        self.beginResetModel()
+        self._items = items
+        self.endResetModel()
+
+    def append_item(self, payload: dict[str, str]) -> None:
+        """아이템 추가"""
+        row = len(self._items)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._items.append(payload)
+        self.endInsertRows()
+
+    def clear(self) -> None:
+        """모두 삭제"""
+        self.beginResetModel()
+        self._items.clear()
+        self.endResetModel()
+
+    def set_search_query(self, query: str) -> None:
+        """검색어 설정 (하이라이트용)"""
+        self._search_query = query
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, 0))
+
+    def set_include_snippet(self, include: bool) -> None:
+        """조각 문구 표시 여부 설정"""
+        self._include_snippet = include
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, 0))
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return len(self._items)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._items):
+            return None
+
+        payload = self._items[index.row()]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return payload.get('file_name', '')
+
+        if role == FileNameRole:
+            return payload.get('file_name', '')
+        if role == FilePathRole:
+            return payload.get('file_path', '')
+        if role == SnippetRole:
+            return payload.get('snippet', '')
+        if role == PreviewRole:
+            return payload.get('preview', '')
+        if role == CreatedAtRole:
+            return payload.get('created_at', '')
+        if role == ModifiedAtRole:
+            return payload.get('modified_at', '')
+        if role == FileSizeRole:
+            return payload.get('file_size', '')
+        if role == FileKindRole:
+            return payload.get('file_kind', '')
+        if role == RawPayloadRole:
+            return payload
+        if role == SearchQueryRole:
+            return self._search_query
+        if role == IncludeSnippetRole:
+            return self._include_snippet
+        if role == SortTimestampRole:
+            # 정렬용 타임스탬프 (modified_at 기준)
+            modified_at = payload.get('modified_at', '')
+            try:
+                # ISO 형식 가정: 2024-01-15T10:30:00
+                from datetime import datetime
+                dt = datetime.fromisoformat(modified_at.replace('Z', '+00:00'))
+                return int(dt.timestamp())
+            except Exception:
+                return 0
+
+        return None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def get_payload_at(self, row: int) -> dict[str, str] | None:
+        """특정 행의 payload 가져오기"""
+        if 0 <= row < len(self._items):
+            return self._items[row]
+        return None
+
+
+class DocumentResultSortProxyModel(QSortFilterProxyModel):
+    """문서 검색 결과 정렬용 프록시 모델"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setSortRole(SortTimestampRole)
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        """정렬 로직"""
+        sort_role = self.sortRole()
+
+        left_data = self.sourceModel().data(left, sort_role) if self.sourceModel() else None
+        right_data = self.sourceModel().data(right, sort_role) if self.sourceModel() else None
+
+        if sort_role == SortTimestampRole:
+            # 수치 비교
+            left_val = left_data if isinstance(left_data, (int, float)) else 0
+            right_val = right_data if isinstance(right_data, (int, float)) else 0
+            return left_val < right_val
+
+        if sort_role == FileNameRole:
+            # 문자열 비교 (대소문자 무시)
+            left_str = str(left_data or "").lower()
+            right_str = str(right_data or "").lower()
+            return left_str < right_str
+
+        if sort_role == FileKindRole:
+            left_str = str(left_data or "").lower()
+            right_str = str(right_data or "").lower()
+            return left_str < right_str
+
+        # 기본: 원본 순서 유지 (관련도순)
+        return left.row() < right.row()
+
+    def get_payload_at_proxy_row(self, proxy_row: int) -> dict[str, str] | None:
+        """프록시 인덱스 기준으로 payload 가져오기"""
+        proxy_index = self.index(proxy_row, 0)
+        source_index = self.mapToSource(proxy_index)
+        if source_index.isValid() and self.sourceModel():
+            return self.sourceModel().data(source_index, RawPayloadRole)
+        return None
+
+
+class DocumentResultDelegate(QStyledItemDelegate):
+    """문서 검색 결과 카드 스타일 델리게이트"""
+
+    # 시각적 상수 (밀도 높은 리스트용)
+    CARD_MARGIN = 6
+    CARD_PADDING = 8
+    CARD_SPACING = 5
+    ICON_SIZE = 24
+    BADGE_HEIGHT = 14
+    BADGE_PADDING_X = 6
+    SNIPPET_MAX_LINES = 1
+    PATH_ELLIPSIS_WIDTH = 200
+
+    # 색상 팔레트
+    COL_CARD_BG = QColor("#FFFFFF")
+    COL_CARD_HOVER = QColor("#F2F7FF")
+    COL_CARD_SELECTED_BORDER = QColor("#3B82F6")
+    COL_CARD_SELECTED_FILL = QColor("#EFF6FF")
+    COL_TEXT_PRIMARY = QColor("#111827")
+    COL_TEXT_SECONDARY = QColor("#6B7280")
+    COL_TEXT_TERTIARY = QColor("#9CA3AF")
+    COL_BADGE_BG = QColor("#E5E7EB")
+    COL_BADGE_TEXT = QColor("#374151")
+    COL_HIGHLIGHT = QColor("#DBEAFE")
+    COL_HIGHLIGHT_TEXT = QColor("#1D4ED8")
+    COL_ICON_DEFAULT = QColor("#9CA3AF")
+
+    # 파일 타입별 색상
+    TYPE_COLORS = {
+        'PDF': (QColor("#FEE2E2"), QColor("#991B1B")),
+        'DOCX': (QColor("#DBEAFE"), QColor("#1E40AF")),
+        'XLSX': (QColor("#D1FAE5"), QColor("#065F46")),
+        'HWP': (QColor("#E0E7FF"), QColor("#3730A3")),
+        'HWPX': (QColor("#E0E7FF"), QColor("#3730A3")),
+        'TXT': (QColor("#F3F4F6"), QColor("#4B5563")),
+    }
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+
+    def sizeHint(self, option, index: QModelIndex) -> QSize:
+        """카드 크기 계산 (밀도 높은 리스트용)"""
+        include_snippet = index.data(IncludeSnippetRole) or False
+        snippet = index.data(SnippetRole) or ""
+
+        base_height = self.CARD_PADDING * 2 + self.ICON_SIZE
+
+        if include_snippet and snippet.strip():
+            # 조각 문구 높이 추가 (줄 수에 따라) - 최소 높이로 조정
+            snippet_lines = min(self.SNIPPET_MAX_LINES, snippet.count('\n') + 1)
+            base_height += self.CARD_SPACING + (snippet_lines * 14) + 6  # 여유 공간 축소
+
+        # 경로 한 줄 추가 (작은 폰트)
+        base_height += self.CARD_SPACING + 12
+
+        return QSize(option.rect.width() - self.CARD_MARGIN * 2, base_height)
+
+    def paint(self, painter, option, index: QModelIndex) -> None:
+        """카드 렌더링"""
+        if not index.isValid():
+            return
+
+        # 데이터 추출
+        file_name = index.data(FileNameRole) or ""
+        file_path = index.data(FilePathRole) or ""
+        file_kind = index.data(FileKindRole) or ""
+        file_size = index.data(FileSizeRole) or ""
+        modified_at = index.data(ModifiedAtRole) or ""
+        snippet = index.data(SnippetRole) or ""
+        search_query = index.data(SearchQueryRole) or ""
+        include_snippet = index.data(IncludeSnippetRole) or False
+
+        # 상태 확인
+        is_selected = option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus)
+        is_hover = option.state & QStyle.StateFlag.State_MouseOver
+
+        # 페인터 설정
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        # 카드 영역 계산
+        card_rect = option.rect.adjusted(self.CARD_MARGIN, self.CARD_MARGIN // 2,
+                                          -self.CARD_MARGIN, -self.CARD_MARGIN // 2)
+
+        # 배경 그리기 (QRectF 변환)
+        self._paint_background(painter, QRectF(card_rect), is_selected, is_hover)
+
+        # 내용 영역
+        content_rect = card_rect.adjusted(self.CARD_PADDING, self.CARD_PADDING,
+                                          -self.CARD_PADDING, -self.CARD_PADDING)
+        x = content_rect.left()
+        y = content_rect.top()
+        available_width = content_rect.width()
+
+        # 1행: 아이콘 + 파일명 + 배지 + 메타정보
+        icon_rect = QRectF(x, y, self.ICON_SIZE, self.ICON_SIZE)
+        self._paint_file_icon(painter, icon_rect, file_kind)
+
+        x += self.ICON_SIZE + 10
+        line1_y = y + (self.ICON_SIZE - 14) // 2
+
+        # 파일명 (검색어 하이라이트 포함)
+        name_width = int(available_width - (self.ICON_SIZE + 10 + 100 + 80 + 80))
+        self._paint_highlighted_text(painter, int(x), int(line1_y), file_name, search_query,
+                                      self.COL_TEXT_PRIMARY, is_bold=True, max_width=name_width)
+
+        # 파일 타입 배지
+        badge_x = int(x + name_width + 10)
+        self._paint_badge(painter, badge_x, int(line1_y - 2), file_kind)
+
+        # 파일 크기
+        size_x = badge_x + 70
+        self._paint_text(painter, size_x, int(line1_y), file_size, self.COL_TEXT_SECONDARY, 11)
+
+        # 수정일
+        date_x = size_x + 80
+        self._paint_text(painter, date_x, int(line1_y), modified_at[:10], self.COL_TEXT_SECONDARY, 11)
+
+        # 2행: 조각 문구 (있을 때만)
+        y += self.ICON_SIZE + self.CARD_SPACING
+        if include_snippet and snippet.strip():
+            snippet_rect = QRectF(x, y, available_width - (x - content_rect.left()), 40)
+            self._paint_snippet(painter, snippet_rect, snippet, search_query)
+            y += snippet_rect.height() + self.CARD_SPACING
+        else:
+            y += self.CARD_SPACING // 2
+
+        # 3행: 파일 경로 (elide 처리)
+        self._paint_elided_path(painter, int(x), int(y), file_path, int(available_width - (x - content_rect.left())))
+
+        painter.restore()
+
+    def _paint_background(self, painter, rect: 'QRectF', is_selected: bool, is_hover: bool) -> None:
+        """카드 배경 그리기"""
+        path = QPainterPath()
+        path.addRoundedRect(rect, 8, 8)
+
+        if is_selected:
+            # 선택 상태: 테두리 + 배경
+            painter.fillPath(path, self.COL_CARD_SELECTED_FILL)
+            pen = QPen(self.COL_CARD_SELECTED_BORDER)
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.drawPath(path)
+        elif is_hover:
+            # 호버 상태
+            painter.fillPath(path, self.COL_CARD_HOVER)
+        else:
+            # 기본 상태
+            painter.fillPath(path, self.COL_CARD_BG)
+
+    def _paint_file_icon(self, painter, rect: 'QRectF', file_kind: str) -> None:
+        """파일 아이콘 그리기"""
+        # 파일 타입별 색상
+        bg_color, text_color = self.TYPE_COLORS.get(file_kind, (self.COL_BADGE_BG, self.COL_BADGE_TEXT))
+
+        # 둥근 사각형 배경
+        painter.save()
+        path = QPainterPath()
+        path.addRoundedRect(rect, 6, 6)
+        painter.fillPath(path, bg_color)
+
+        # 확장자 텍스트
+        painter.setPen(text_color)
+        font = QFont("Segoe UI", 7, QFont.Weight.Bold)
+        painter.setFont(font)
+
+        ext = file_kind[:3].upper() if file_kind else "FILE"
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, ext)
+        painter.restore()
+
+    def _paint_badge(self, painter, x: int, y: int, text: str) -> None:
+        """파일 타입 배지 그리기"""
+        bg_color, text_color = self.TYPE_COLORS.get(text, (self.COL_BADGE_BG, self.COL_BADGE_TEXT))
+
+        font = QFont("Segoe UI", 8)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        text_width = metrics.horizontalAdvance(text)
+        badge_width = text_width + self.BADGE_PADDING_X * 2
+
+        badge_rect = QRectF(x, y, badge_width, self.BADGE_HEIGHT)
+
+        # 배지 배경
+        path = QPainterPath()
+        path.addRoundedRect(badge_rect, 9, 9)
+        painter.fillPath(path, bg_color)
+
+        # 텍스트
+        painter.setPen(text_color)
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_text(self, painter, x: int, y: int, text: str, color: QColor, size: int = 10) -> None:
+        """기본 텍스트 그리기"""
+        painter.setPen(color)
+        font = QFont("Segoe UI", size)
+        painter.setFont(font)
+        painter.drawText(x, y + 10, text)
+
+    def _paint_highlighted_text(self, painter, x: int, y: int, text: str, query: str,
+                                color: QColor, is_bold: bool = False, max_width: int = 0) -> None:
+        """검색어 하이라이트 포함 텍스트 그리기"""
+        font = QFont("Segoe UI", 11 if is_bold else 10)
+        if is_bold:
+            font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+
+        # 텍스트가 너무 길면 elide
+        display_text = text
+        if max_width > 0 and metrics.horizontalAdvance(text) > max_width:
+            display_text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, max_width)
+
+        if not query or query.lower() not in display_text.lower():
+            # 하이라이트 없음
+            painter.setPen(color)
+            painter.drawText(x, y + 12, display_text)
+            return
+
+        # 하이라이트 처리
+        query_lower = query.lower()
+        text_lower = display_text.lower()
+        start = 0
+        current_x = x
+
+        while start < len(display_text):
+            idx = text_lower.find(query_lower, start)
+            if idx == -1:
+                # 남은 일반 텍스트
+                segment = display_text[start:]
+                painter.setPen(color)
+                painter.drawText(current_x, y + 12, segment)
+                break
+
+            # 하이라이트 전 텍스트
+            if idx > start:
+                segment = display_text[start:idx]
+                painter.setPen(color)
+                painter.drawText(current_x, y + 12, segment)
+                current_x += metrics.horizontalAdvance(segment)
+
+            # 하이라이트 부분
+            hl_text = display_text[idx:idx + len(query)]
+
+            # 하이라이트 배경
+            hl_width = metrics.horizontalAdvance(hl_text)
+            hl_rect = QRectF(current_x - 1, y - 1, hl_width + 2, 16)
+            painter.save()
+            painter.fillRect(hl_rect, self.COL_HIGHLIGHT)
+            painter.restore()
+
+            # 하이라이트 텍스트
+            painter.setPen(self.COL_HIGHLIGHT_TEXT)
+            font.setWeight(QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(current_x, y + 12, hl_text)
+
+            current_x += hl_width
+            start = idx + len(query)
+
+            # 폰트 원복
+            font.setWeight(QFont.Weight.DemiBold if is_bold else QFont.Weight.Normal)
+            painter.setFont(font)
+
+    def _paint_snippet(self, painter, rect: 'QRectF', snippet: str, query: str) -> None:
+        """조각 문구 텍스트 그리기 (최대 1줄, 작은 폰트)"""
+        painter.setPen(self.COL_TEXT_SECONDARY)
+        font = QFont("Segoe UI", 9)
+        painter.setFont(font)
+
+        # 줄바꿈 처리
+        lines = snippet.split('\n')[:self.SNIPPET_MAX_LINES]
+        y = int(rect.top())
+        line_height = 12  # 줄 간격 축소
+
+        for line in lines:
+            if not line.strip():
+                continue
+            # 검색어 하이라이트
+            self._paint_highlighted_text_simple(painter, int(rect.left()), y, line, query,
+                                                self.COL_TEXT_SECONDARY, max_width=int(rect.width()))
+            y += line_height
+
+    def _paint_highlighted_text_simple(self, painter, x: int, y: int, text: str, query: str,
+                                        color: QColor, max_width: int = 0) -> None:
+        """간단한 하이라이트 텍스트 (조각 문구용)"""
+        metrics = painter.fontMetrics()
+
+        # elide 처리
+        display_text = text
+        if max_width > 0 and metrics.horizontalAdvance(text) > max_width:
+            display_text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, max_width)
+
+        if not query or query.lower() not in display_text.lower():
+            painter.setPen(color)
+            painter.drawText(x, y + 12, display_text)
+            return
+
+        # 하이라이트
+        query_lower = query.lower()
+        text_lower = display_text.lower()
+        start = 0
+        current_x = x
+
+        while start < len(display_text):
+            idx = text_lower.find(query_lower, start)
+            if idx == -1:
+                segment = display_text[start:]
+                painter.setPen(color)
+                painter.drawText(current_x, y + 12, segment)
+                break
+
+            if idx > start:
+                segment = display_text[start:idx]
+                painter.setPen(color)
+                painter.drawText(current_x, y + 12, segment)
+                current_x += metrics.horizontalAdvance(segment)
+
+            hl_text = display_text[idx:idx + len(query)]
+            hl_width = metrics.horizontalAdvance(hl_text)
+
+            # 하이라이트 배경
+            hl_rect = QRectF(current_x - 1, y - 1, hl_width + 2, 16)
+            painter.save()
+            painter.fillRect(hl_rect, self.COL_HIGHLIGHT)
+            painter.restore()
+
+            painter.setPen(self.COL_HIGHLIGHT_TEXT)
+            font = painter.font()
+            font.setWeight(QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(current_x, y + 12, hl_text)
+
+            current_x += hl_width
+            start = idx + len(query)
+
+            # 원복
+            font.setWeight(QFont.Weight.Normal)
+            painter.setFont(font)
+
+    def _paint_elided_path(self, painter, x: int, y: int, path: str, max_width: int) -> None:
+        """경로 텍스트 (말줄임표 처리)"""
+        painter.setPen(self.COL_TEXT_TERTIARY)
+        font = QFont("Segoe UI", 9)
+        painter.setFont(font)
+
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(path, Qt.TextElideMode.ElideMiddle, max_width)
+        painter.drawText(x, y + 12, elided)
 
 
 current_dir = Path(__file__).parent
@@ -626,6 +1145,7 @@ class DocumentSearchMainWindow(QMainWindow):
         self.search_worker = None
         self.current_folder = ''
         self.current_preview_path = ''
+        self._preview_original_pixmap: QPixmap | None = None
         self._result_payloads: list[dict[str, str]] = []
         self._syncing_folder_checks = False
         self.supported_file_types = {
@@ -670,30 +1190,62 @@ class DocumentSearchMainWindow(QMainWindow):
         self.result_panel = self._build_result_panel()
         self.preview_panel = self._build_preview_panel()
 
-        # 탭 컨테이너 생성: 검색 탭 + 조건 탭
+        # 탭 컨테이너 생성: 검색 탭 + 조건 탭 (Segmented Control 스타일)
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName('searchTabs')
-        self.tab_widget.addTab(self.search_panel, '🔍 검색')
-        self.tab_widget.addTab(self.conditions_panel, '⚙️ 조건')
+        self.tab_widget.addTab(self.search_panel, '  🔍 검색어 입력  ')
+        self.tab_widget.addTab(self.conditions_panel, '  ⚙️ 검색 조건 설정  ')
         self.tab_widget.setTabPosition(QTabWidget.TabPosition.North)
         self.tab_widget.setDocumentMode(True)
         self.tab_widget.setMovable(False)
         self.tab_widget.setTabsClosable(False)
+
+        # 탭 위젯 직접 스타일 적용 (버튼형 Segmented Control)
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                background: #FFFFFF;
+                border: 0.5px solid #C6C6C8;
+                border-radius: 14px;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 20px;
+                margin: 4px 2px;
+                font-weight: 500;
+                font-size: 13px;
+                color: #636366;
+                min-width: 100px;
+            }
+            QTabBar::tab:hover {
+                background: rgba(0, 122, 255, 0.08);
+                color: #007AFF;
+            }
+            QTabBar::tab:selected {
+                background: #007AFF;
+                color: #FFFFFF;
+                font-weight: 600;
+            }
+        """)
 
         self.top_splitter.addWidget(self.folder_panel)
         self.top_splitter.addWidget(self.tab_widget)
         self.bottom_splitter.addWidget(self.result_panel)
         self.bottom_splitter.addWidget(self.preview_panel)
 
-        self.top_splitter.setStretchFactor(0, 48)
-        self.top_splitter.setStretchFactor(1, 52)
-        self.bottom_splitter.setStretchFactor(0, 58)
-        self.bottom_splitter.setStretchFactor(1, 42)
+        # 좌우 3:2 고정 비율 (60% : 40%) - 1/4:2/4분면, 3/4:4/4분면
+        self.top_splitter.setStretchFactor(0, 60)
+        self.top_splitter.setStretchFactor(1, 40)
+        self.bottom_splitter.setStretchFactor(0, 60)
+        self.bottom_splitter.setStretchFactor(1, 40)
 
         self.vertical_splitter.addWidget(self.top_splitter)
         self.vertical_splitter.addWidget(self.bottom_splitter)
-        self.vertical_splitter.setStretchFactor(0, 33)  # 상단 1/3
-        self.vertical_splitter.setStretchFactor(1, 67)  # 하단 2/3
+        # 상하 2:3 고정 비율 (상단 40%, 하단 60%)
+        self.vertical_splitter.setStretchFactor(0, 40)
+        self.vertical_splitter.setStretchFactor(1, 60)
         root.addWidget(self.vertical_splitter, 1)
 
         self._build_menu()
@@ -801,7 +1353,7 @@ class DocumentSearchMainWindow(QMainWindow):
         return panel
 
     def _build_conditions_panel(self) -> QWidget:
-        """두 번째 탭: 검색 조건 (파일 타입, 스니펫 포함 등)"""
+        """두 번째 탭: 검색 조건 (파일 타입, 조각 문구 포함 등)"""
         panel = QFrame()
         panel.setObjectName("panelCard")
         layout = QVBoxLayout(panel)
@@ -831,7 +1383,7 @@ class DocumentSearchMainWindow(QMainWindow):
             type_layout.addWidget(checkbox, index // 3, index % 3)
         layout.addWidget(type_frame)
 
-        self.include_snippet_checkbox = QCheckBox("검색 결과에 스니펫 포함")
+        self.include_snippet_checkbox = QCheckBox("검색 결과에 조각 문구 포함")
         self.include_snippet_checkbox.setChecked(True)
         layout.addWidget(self.include_snippet_checkbox)
 
@@ -844,59 +1396,116 @@ class DocumentSearchMainWindow(QMainWindow):
         return panel
 
     def _build_result_panel(self) -> QWidget:
+        """검색 결과 패널 - QListView + 카드 UI"""
         panel = QFrame()
         panel.setObjectName("panelCard")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
 
-        header = QLabel("검색 결과")
-        header.setObjectName("sectionTitle")
-        layout.addWidget(header)
+        # ── 상단 툴바 (콤팩트) ──
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
 
-        # QTableWidget으로 교체
-        self.result_table = QTableWidget()
-        self.result_table.setColumnCount(5)
-        self.result_table.setHorizontalHeaderLabels(["파일명", "종류", "크기", "생성일", "경로"])
-        
-        # 행 번호 숨기기
-        self.result_table.verticalHeader().setVisible(False)
-        
-        # 테이블 속성 설정
-        self.result_table.setObjectName("resultTable")
-        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.result_table.setAlternatingRowColors(True)
-        
-        # 열 너비 정책 설정
-        header = self.result_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # 파일명 컬럼은 남는 공간 모두 차지
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 종류
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # 크기
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # 생성일
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 경로
-        
-        # 선택 변경 시그널 연결
-        self.result_table.itemSelectionChanged.connect(self._handle_table_selection_changed)
+        # 결과 수 라벨
+        self.result_count_label = QLabel("0개 문서")
+        self.result_count_label.setObjectName("resultCountLabel")
+        toolbar.addWidget(self.result_count_label)
 
-        # 더블클릭으로 파일 열기
-        self.result_table.itemDoubleClicked.connect(self._on_result_item_double_clicked)
+        toolbar.addStretch()
 
-        # 우클릭 컨텍스트 메뉴
-        self.result_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.result_table.customContextMenuRequested.connect(self._show_result_context_menu)
+        # 정렬 콤보박스
+        sort_label = QLabel("정렬:")
+        sort_label.setObjectName("fieldLabel")
+        toolbar.addWidget(sort_label)
 
-        layout.addWidget(self.result_table, 1)
+        self.sort_combo = QComboBox()
+        self.sort_combo.setObjectName("sortCombo")
+        self.sort_combo.addItem("관련도순", "relevance")
+        self.sort_combo.addItem("수정일순", "modified")
+        self.sort_combo.addItem("파일명순", "filename")
+        self.sort_combo.addItem("종류순", "filekind")
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        toolbar.addWidget(self.sort_combo)
 
-        self.result_meta_label = QLabel("0개 문서")
-        self.result_meta_label.setObjectName("metaLabel")
-        layout.addWidget(self.result_meta_label)
+        # 조각 문구 표시 토글
+        self.snippet_toggle_btn = QPushButton("조각 문구 보기")
+        self.snippet_toggle_btn.setObjectName("snippetToggleBtn")
+        self.snippet_toggle_btn.setCheckable(True)
+        self.snippet_toggle_btn.setChecked(True)
+        self.snippet_toggle_btn.clicked.connect(self._on_snippet_toggle)
+        toolbar.addWidget(self.snippet_toggle_btn)
+
+        layout.addLayout(toolbar)
+
+        # ── Stacked Widget: Empty State / Result List ──
+        self.result_stack = QStackedWidget()
+        self.result_stack.setObjectName("resultStack")
+
+        # Page 0: Empty State
+        empty_widget = QWidget()
+        empty_layout = QVBoxLayout(empty_widget)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_icon = QLabel("🔍")
+        empty_icon.setStyleSheet("font-size: 48px; color: #9CA3AF;")
+        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_icon)
+        empty_title = QLabel("검색 결과가 없습니다")
+        empty_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #4B5563; margin: 10px 0;")
+        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_title)
+        empty_desc = QLabel("검색어를 입력하고 검색 버튼을 눌러 문서를 찾아보세요.\n\n"
+                           "팁: 더 짧은 검색어를 사용하거나 파일 형식을 넓혀보세요.")
+        empty_desc.setStyleSheet("font-size: 12px; color: #6B7280; line-height: 1.5;")
+        empty_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_desc)
+        self.result_stack.addWidget(empty_widget)
+
+        # Page 1: Result ListView
+        result_container = QWidget()
+        result_layout = QVBoxLayout(result_container)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(0)
+
+        # QListView 설정
+        self.result_view = QListView()
+        self.result_view.setObjectName("resultView")
+        self.result_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.result_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.result_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.result_view.setUniformItemSizes(False)  # 가변 높이 카드
+
+        # 모델 및 프록시 설정
+        self.result_model = DocumentResultListModel(self)
+        self.result_proxy = DocumentResultSortProxyModel(self)
+        self.result_proxy.setSourceModel(self.result_model)
+        self.result_view.setModel(self.result_proxy)
+
+        # 델리게이트 설정
+        self.result_delegate = DocumentResultDelegate(self)
+        self.result_view.setItemDelegate(self.result_delegate)
+
+        # 시그널 연결
+        self.result_view.selectionModel().currentChanged.connect(self._on_result_selection_changed)
+        self.result_view.doubleClicked.connect(self._on_result_double_clicked)
+        self.result_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.result_view.customContextMenuRequested.connect(self._show_result_context_menu)
+
+        result_layout.addWidget(self.result_view)
+        self.result_stack.addWidget(result_container)
+
+        # 초기에는 empty state 표시
+        self.result_stack.setCurrentIndex(0)
+
+        layout.addWidget(self.result_stack, 1)
+
         return panel
 
     def _build_preview_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("panelCard")
+        # 미리보기 패널이 splitter 비율을 벗어나 확장되지 않도록 제한
+        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
@@ -908,13 +1517,15 @@ class DocumentSearchMainWindow(QMainWindow):
         # QStackedWidget for dynamic preview content
         self.preview_stack = QStackedWidget()
         self.preview_stack.setObjectName("previewStack")
+        self.preview_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Page 0: QLabel for image/PDF thumbnails
         self.preview_image_label = QLabel()
         self.preview_image_label.setObjectName("previewImage")
         self.preview_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_image_label.setScaledContents(True)
+        self.preview_image_label.setScaledContents(False)
         self.preview_image_label.setMinimumHeight(200)
+        self.preview_image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.preview_stack.addWidget(self.preview_image_label)
 
         # Page 1: QTextBrowser for HTML/text content
@@ -928,8 +1539,10 @@ class DocumentSearchMainWindow(QMainWindow):
         return panel
 
     def _load_dummy_results_for_test(self) -> None:
-        self.result_table.setRowCount(0)  # 테이블 초기화
+        # 결과 초기화
+        self.result_model.clear()
         self._result_payloads.clear()
+        self.result_stack.setCurrentIndex(0)
         dummy_rows = [
             {
                 "file_name": "아파트 공동체 활성화 실행계획서.pdf",
@@ -1169,12 +1782,14 @@ class DocumentSearchMainWindow(QMainWindow):
             self.conditions_summary_label.setText('선택된 문서 형식이 없습니다.')
             return
         snippet_mode = '포함' if self.include_snippet_checkbox.isChecked() else '미포함'
-        self.conditions_summary_label.setText('검색 대상 형식: ' + ', '.join(selected_labels) + f' | 스니펫: {snippet_mode}')
+        self.conditions_summary_label.setText('검색 대상 형식: ' + ', '.join(selected_labels) + f' | 조각 문구: {snippet_mode}')
 
     def _start_search(self) -> None:
-        self.result_table.setRowCount(0)  # 테이블 초기화
+        # 결과 초기화
+        self.result_model.clear()
         self._result_payloads.clear()
-        self.result_meta_label.setText("0개 문서")
+        self.result_count_label.setText("0개 문서")
+        self.result_stack.setCurrentIndex(0)  # Empty state로 전환
         self._clear_preview()
 
         checked_folders = sorted(self.checked_folder_paths_set)
@@ -1236,105 +1851,51 @@ class DocumentSearchMainWindow(QMainWindow):
         self._append_result_item(payload)
 
     def _append_result_item(self, payload: dict[str, str]) -> None:
-        include_snippet = self.include_snippet_checkbox.isChecked()
-        
-        # 메타데이터 준비
-        file_name = payload.get('file_name', '')
-        file_path = payload.get('file_path', '')
-        file_size = payload.get('file_size', '')
-        file_kind = payload.get('file_kind', '')
-        created_at = payload.get('created_at', '')
-        modified_at = payload.get('modified_at', '')
-        snippet = payload.get('snippet', '')
-        preview = payload.get('preview', '')
-        
-        # 검색어 강조 표시 기능 제거 - 일반 텍스트로 표시
-        pass
-        
-        if include_snippet and snippet:
-            # 스니펫 포함 시: 2개의 행 삽입
-            # 첫 번째 행: 메타데이터
-            row = self.result_table.rowCount()
-            self.result_table.insertRow(row)
-            
-            # 메타데이터 아이템 생성
-            items = [
-                QTableWidgetItem(file_name),   # 파일명
-                QTableWidgetItem(file_kind),   # 종류
-                QTableWidgetItem(file_size),   # 크기
-                QTableWidgetItem(created_at),  # 생성일
-                QTableWidgetItem(file_path)    # 경로
-            ]
-            
-            for col, item in enumerate(items):
-                item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
-                item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
-                item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
-                self.result_table.setItem(row, col, item)
-            
-            # 두 번째 행: 스니펫 (5개 컬럼 병합)
-            snippet_row = self.result_table.rowCount()
-            self.result_table.insertRow(snippet_row)
-            
-            snippet_item = QTableWidgetItem(snippet)
-            snippet_item.setForeground(QColor('#6b7280'))  # 옅은 회색
-            snippet_item.setFont(QFont("Segoe UI", 9))  # 약간 작은 폰트
-            snippet_item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
-            snippet_item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
-            snippet_item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
-            
-            self.result_table.setItem(snippet_row, 0, snippet_item)
-            self.result_table.setSpan(snippet_row, 0, 1, 5)  # 5개 컬럼 병합
-            
-        else:
-            # 스니펫 미포함 시: 1개의 행만 삽입
-            row = self.result_table.rowCount()
-            self.result_table.insertRow(row)
-            
-            # 메타데이터 아이템 생성
-            items = [
-                QTableWidgetItem(file_name),   # 파일명
-                QTableWidgetItem(file_kind),   # 종류
-                QTableWidgetItem(file_size),   # 크기
-                QTableWidgetItem(created_at),  # 생성일
-                QTableWidgetItem(file_path)    # 경로
-            ]
-            
-            for col, item in enumerate(items):
-                item.setData(Qt.ItemDataRole.UserRole, preview)  # 미리보기 데이터 저장
-                item.setData(Qt.ItemDataRole.UserRole + 1, file_path)  # 파일 경로 저장
-                item.setData(Qt.ItemDataRole.UserRole + 2, file_name)  # 파일 이름 저장
-                self.result_table.setItem(row, col, item)
-        
-        # 행 높이 자동 조절
-        self.result_table.resizeRowsToContents()
-        
+        """검색 결과 아이템을 모델에 추가 (QListView 기반)"""
+        # 모델에 추가
+        self.result_model.append_item(payload)
+
         # 결과 카운트 업데이트
-        self.result_meta_label.setText(f"{len(self._result_payloads)}개 문서")
-        
-        # 첫 번째 결과 자동 선택
-        if self.result_table.currentRow() == -1:
-            self.result_table.selectRow(0)
-            self._handle_table_selection_changed()
+        count = len(self._result_payloads)
+        self.result_count_label.setText(f"{count}개 문서")
+
+        # 첫 번째 결과일 때 결과 뷰 표시
+        if count == 1:
+            self.result_stack.setCurrentIndex(1)  # 결과 리스트 페이지로 전환
+            # 조각 문구 상태 동기화
+            include_snippet = self.include_snippet_checkbox.isChecked()
+            self.result_model.set_include_snippet(include_snippet)
+            self.snippet_toggle_btn.setChecked(include_snippet)
+            # 검색어 설정
+            self.result_model.set_search_query(self._current_query)
+            # 첫 번째 아이템 선택
+            self.result_view.setCurrentIndex(self.result_proxy.index(0, 0))
     
-    def _on_result_item_double_clicked(self, item) -> None:
-        """검색 결과 더블클릭 시 파일 열기"""
-        file_path = item.data(Qt.ItemDataRole.UserRole + 1)
-        if file_path and os.path.exists(file_path):
-            self._open_file(file_path)
+    def _on_result_double_clicked(self, index: QModelIndex) -> None:
+        """검색 결과 더블클릭 시 파일 열기 (QListView 기반)"""
+        source_index = self.result_proxy.mapToSource(index)
+        payload = self.result_model.get_payload_at(source_index.row())
+        if payload:
+            file_path = payload.get('file_path', '')
+            if file_path and os.path.exists(file_path):
+                self._open_file(file_path)
 
     def _show_result_context_menu(self, position: QPoint) -> None:
-        """검색 결과 우클릭 컨텍스트 메뉴 표시"""
-        current_row = self.result_table.currentRow()
-        if current_row < 0:
+        """검색 결과 우클릭 컨텍스트 메뉴 표시 (QListView 기반)"""
+        index = self.result_view.indexAt(position)
+        if not index.isValid():
             return
 
-        # 현재 행에서 파일 경로 가져오기
-        item = self.result_table.item(current_row, 0)
-        if not item:
+        # 선택된 아이템으로 변경
+        self.result_view.setCurrentIndex(index)
+
+        # payload 가져오기
+        source_index = self.result_proxy.mapToSource(index)
+        payload = self.result_model.get_payload_at(source_index.row())
+        if not payload:
             return
 
-        file_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        file_path = payload.get('file_path', '')
         if not file_path:
             return
 
@@ -1352,7 +1913,7 @@ class DocumentSearchMainWindow(QMainWindow):
         menu.addAction(folder_action)
 
         # 메뉴 표시
-        menu.exec(self.result_table.viewport().mapToGlobal(position))
+        menu.exec(self.result_view.viewport().mapToGlobal(position))
 
     def _open_file(self, file_path: str) -> None:
         """파일 열기"""
@@ -1378,63 +1939,43 @@ class DocumentSearchMainWindow(QMainWindow):
             QMessageBox.warning(self, "폴더 열기 오류", f"폴더를 열 수 없습니다:\n{e}")
 
     def _rerender_result_items(self, checked: bool | None = None) -> None:
-        if not hasattr(self, 'result_table'):
+        """조각 문구 표시 상태 변경 시 결과 재렌더링"""
+        if not hasattr(self, 'result_view'):
             return
+
+        # 현재 선택된 파일 경로 저장
         selected_path = self.current_preview_path
-        self.result_table.setRowCount(0)  # 테이블 초기화
-        for payload in self._result_payloads:
-            self._append_result_item(payload)
+
+        # 조각 문구 상태 업데이트
+        include_snippet = self.include_snippet_checkbox.isChecked()
+        self.result_model.set_include_snippet(include_snippet)
+        self.snippet_toggle_btn.setChecked(include_snippet)
+
+        # 선택 복원
         if selected_path:
-            # 선택된 경로에 해당하는 행 찾기
-            for row in range(self.result_table.rowCount()):
-                item = self.result_table.item(row, 0)  # 첫 번째 컬럼에서 데이터 확인
-                if item and item.data(Qt.ItemDataRole.UserRole + 1) == selected_path:
-                    self.result_table.selectRow(row)
+            for row in range(self.result_model.rowCount()):
+                payload = self.result_model.get_payload_at(row)
+                if payload and payload.get('file_path') == selected_path:
+                    proxy_index = self.result_proxy.mapFromSource(self.result_model.index(row, 0))
+                    self.result_view.setCurrentIndex(proxy_index)
                     break
+
         self._update_conditions_summary()
 
-    def _handle_table_selection_changed(self) -> None:
-        """QTableWidget 선택 변경 처리 - 스니펫 행과 메타데이터 행 연동"""
-        current_row = self.result_table.currentRow()
-        if current_row >= 0:
-            # 현재 행이 스니펫 행인지 확인 (첫 번째 컬럼에만 데이터가 있고 나머지는 비어있으면 스니펫 행)
-            is_snippet_row = False
-            for col in range(1, 5):  # 1-4번 컬럼 확인
-                if self.result_table.item(current_row, col) is None:
-                    is_snippet_row = True
-                    break
+    def _on_result_selection_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
+        """QListView 선택 변경 처리"""
+        if not current.isValid():
+            return
 
-            # 같은 데이터의 행 범위 결정
-            if is_snippet_row and current_row > 0:
-                # 스니펫 행을 선택하면 메타데이터 행과 함께 선택
-                meta_row = current_row - 1
-            else:
-                # 메타데이터 행을 선택한 경우
-                meta_row = current_row
+        # 소스 모델 인덱스로 변환
+        source_index = self.result_proxy.mapToSource(current)
+        payload = self.result_model.get_payload_at(source_index.row())
 
-            # 다음 행이 스니펫 행인지 확인
-            has_snippet = False
-            if meta_row + 1 < self.result_table.rowCount():
-                for col in range(1, 5):
-                    if self.result_table.item(meta_row + 1, col) is None:
-                        has_snippet = True
-                        break
-
-            # 연결된 행들을 모두 선택 (시그널 임시 차단)
-            self.result_table.itemSelectionChanged.disconnect(self._handle_table_selection_changed)
-            self.result_table.clearSelection()
-            self.result_table.selectRow(meta_row)
-            if has_snippet:
-                self.result_table.selectRow(meta_row + 1)
-            self.result_table.itemSelectionChanged.connect(self._handle_table_selection_changed)
-
-            # 대상 행에서 데이터 가져오기
-            item = self.result_table.item(meta_row, 0)  # 첫 번째 컬럼에서 데이터 가져오기
-            if item:
-                file_path = item.data(Qt.ItemDataRole.UserRole + 1)
-                preview = item.data(Qt.ItemDataRole.UserRole)
-                file_name = item.data(Qt.ItemDataRole.UserRole + 2)
-                self._load_preview(file_path, preview, file_name)
+        if payload:
+            file_path = payload.get('file_path', '')
+            preview = payload.get('preview', '')
+            file_name = payload.get('file_name', '')
+            self._load_preview(file_path, preview, file_name)
         else:
             self._clear_preview()
 
@@ -1454,6 +1995,12 @@ class DocumentSearchMainWindow(QMainWindow):
         self.search_button.setEnabled(True)
         self.folder_tree.setEnabled(True)
         self.cancel_button.setVisible(False)
+
+        # 결과가 있으면 결과 뷰로 전환, 없으면 empty state 유지
+        if found_count > 0:
+            self.result_stack.setCurrentIndex(1)
+        else:
+            self.result_stack.setCurrentIndex(0)
         print(f"[DocumentSearch] finish signal scanned={scanned_count} found={found_count} cancelled={cancelled}")
         
         # 진행 바 완료 처리
@@ -1467,10 +2014,41 @@ class DocumentSearchMainWindow(QMainWindow):
             self.progress_status.setText(f"{scanned_count:,}개 파일 확인, {found_count:,}개 결과")
             self.progress_details.setText("모든 파일 검색이 완료되었습니다.")
 
+    def _on_sort_changed(self, index: int) -> None:
+        """정렬 기준 변경 처리"""
+        sort_key = self.sort_combo.currentData()
+
+        if sort_key == "relevance":
+            # 관련도순: 원본 순서 유지
+            self.result_proxy.setSortRole(Qt.ItemDataRole.DisplayRole)
+            self.result_proxy.sort(-1, Qt.SortOrder.AscendingOrder)  # 정렬 해제
+        elif sort_key == "modified":
+            # 수정일순
+            self.result_proxy.setSortRole(SortTimestampRole)
+            self.result_proxy.sort(0, Qt.SortOrder.DescendingOrder)
+        elif sort_key == "filename":
+            # 파일명순
+            self.result_proxy.setSortRole(FileNameRole)
+            self.result_proxy.sort(0, Qt.SortOrder.AscendingOrder)
+        elif sort_key == "filekind":
+            # 종류순
+            self.result_proxy.setSortRole(FileKindRole)
+            self.result_proxy.sort(0, Qt.SortOrder.AscendingOrder)
+
+    def _on_snippet_toggle(self, checked: bool) -> None:
+        """조각 문구 토글 버튼 클릭 처리"""
+        # 체크박스와 동기화
+        self.include_snippet_checkbox.setChecked(checked)
+        # 모델 업데이트
+        self.result_model.set_include_snippet(checked)
+        # 델리게이트 크기 힌트가 변경되므로 뷰 업데이트
+        self.result_view.update()
+
     def _fail_search(self, message: str) -> None:
         self.search_button.setEnabled(True)
         self.folder_tree.setEnabled(True)
         self.cancel_button.setVisible(False)
+        self.result_stack.setCurrentIndex(0)  # Empty state
         
         # 진행 바 오류 처리
         self.progress_bar.setValue(0)
@@ -1544,13 +2122,14 @@ class DocumentSearchMainWindow(QMainWindow):
                 self._show_preview_error("PDF 이미지 변환에 실패했습니다.")
                 return
             
-            # QPixmap으로 변환하여 QLabel에 표시
+            # QPixmap으로 변환하여 preview 영역에 맞춰 표시
             pixmap = QPixmap.fromImage(image)
-            
+            self._preview_original_pixmap = pixmap
+
             # 스택 위젯을 이미지 페이지로 전환
             self.preview_stack.setCurrentIndex(PREVIEW_PAGE_IMAGE)
-            self.preview_image_label.setPixmap(pixmap)
-            
+            self._apply_preview_pixmap()
+
             doc.close()
             
         except ImportError:
@@ -1810,8 +2389,9 @@ class DocumentSearchMainWindow(QMainWindow):
         if suffix in image_suffixes and Path(file_path).exists():
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
+                self._preview_original_pixmap = pixmap
                 self.preview_stack.setCurrentIndex(PREVIEW_PAGE_IMAGE)
-                self.preview_image_label.setPixmap(pixmap)
+                self._apply_preview_pixmap()
                 return
         
         # 이미지가 아니면 텍스트로 표시
@@ -1819,10 +2399,13 @@ class DocumentSearchMainWindow(QMainWindow):
 
     def _clear_preview(self) -> None:
         """미리보기 초기화"""
-        if hasattr(self, 'result_table'):
-            self.result_table.clearSelection()
+        if hasattr(self, 'result_view'):
+            self.result_view.clearSelection()
         self.preview_title.setText("미리보기")
         self.current_preview_path = ''
+        self._preview_original_pixmap = None
+        if hasattr(self, 'preview_image_label'):
+            self.preview_image_label.clear()
         
         # 스택 위젯을 텍스트 페이지로 전환하고 기본 메시지 표시
         self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
@@ -2062,75 +2645,62 @@ class DocumentSearchMainWindow(QMainWindow):
                 border-radius: 14px;
                 min-height: 160px;
             }
-            /* ── Tabs ── */
+            /* ── Tab Widget Reference Only (actual styles applied in _build_ui) ── */
             QTabWidget#searchTabs {
                 background: transparent;
                 border: none;
             }
-            QTabWidget#searchTabs::pane {
-                background: #FFFFFF;
-                border: 0.5px solid #C6C6C8;
-                border-radius: 14px;
-                top: -1px;
+            QListView#resultView QScrollBar::add-line:vertical,
+            QListView#resultView QScrollBar::sub-line:vertical {
+                height: 0px;
             }
-            QTabWidget#searchTabs::tab-bar {
-                alignment: left;
-            }
-            QTabWidget#searchTabs QTabBar::tab {
-                background: #F2F2F7;
-                border: 0.5px solid #C6C6C8;
-                border-bottom: none;
-                border-radius: 10px 10px 0 0;
-                padding: 8px 16px;
-                margin-right: 2px;
-                font-weight: 500;
-                font-size: 13px;
-                color: #8E8E93;
-            }
-            QTabWidget#searchTabs QTabBar::tab:selected {
-                background: #FFFFFF;
-                color: #007AFF;
-                border-bottom: 1px solid #FFFFFF;
-            }
-            QTabWidget#searchTabs QTabBar::tab:hover {
-                background: rgba(0, 122, 255, 0.06);
-                color: #007AFF;
-            }
-            /* ── Table Widget ── */
-            QTableWidget#resultTable {
-                background: #FFFFFF;
-                border: 0.5px solid #C6C6C8;
-                border-radius: 12px;
-                gridline-color: #E5E5EA;
-                selection-background-color: rgba(0, 122, 255, 0.08);
-                selection-color: #333333;
-                alternate-background-color: #F9FAFB;
-            }
-            QTableWidget#resultTable::item {
-                padding: 10px 12px;
-                border: none;
-            }
-            QTableWidget#resultTable::item:selected {
-                background: rgba(0, 122, 255, 0.08);
-                color: #333333;
-            }
-            QTableWidget#resultTable::item:hover {
-                background: rgba(0, 122, 255, 0.05);
-            }
-            QTableWidget#resultTable QHeaderView::section {
-                background: #F2F2F7;
-                border: none;
-                border-bottom: 0.5px solid #C6C6C8;
-                padding: 12px;
+            /* ── Result Toolbar ── */
+            QLabel#resultCountLabel {
+                font-size: 14px;
                 font-weight: 600;
-                font-size: 13px;
-                color: #3C3C43;
+                color: #111827;
             }
-            QTableWidget#resultTable QHeaderView::section:first {
-                border-top-left-radius: 12px;
+            QComboBox#sortCombo {
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                color: #374151;
+                min-width: 100px;
             }
-            QTableWidget#resultTable QHeaderView::section:last {
-                border-top-right-radius: 12px;
+            QComboBox#sortCombo:hover {
+                border-color: #D1D5DB;
+            }
+            QComboBox#sortCombo::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox#sortCombo::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #6B7280;
+            }
+            QPushButton#snippetToggleBtn {
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                color: #374151;
+            }
+            QPushButton#snippetToggleBtn:checked {
+                background: #3B82F6;
+                border-color: #3B82F6;
+                color: #FFFFFF;
+            }
+            QPushButton#snippetToggleBtn:hover {
+                border-color: #D1D5DB;
+            }
+            QPushButton#snippetToggleBtn:checked:hover {
+                background: #2563EB;
+                border-color: #2563EB;
             }
             /* ── Progress Bar ── */
             QProgressBar {
@@ -2183,13 +2753,45 @@ class DocumentSearchMainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._apply_fixed_splitter_ratios()
+        self._apply_preview_pixmap()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_fixed_splitter_ratios()
+        self._apply_preview_pixmap()
+
+    def _apply_fixed_splitter_ratios(self) -> None:
         total_width = self.top_splitter.size().width()
         total_height = self.vertical_splitter.size().height()
+
+        # 좌우 3:2 고정 비율 (왼쪽 60%, 오른쪽 40%) - 1/4:2/4분면, 3/4:4/4분면
         if total_width > 0:
-            self.top_splitter.setSizes([int(total_width * 0.50), int(total_width * 0.50)])
-            self.bottom_splitter.setSizes([int(total_width * 0.62), int(total_width * 0.38)])
+            left = int(total_width * 0.60)
+            right = max(1, total_width - left)
+            self.top_splitter.setSizes([left, right])
+            self.bottom_splitter.setSizes([left, right])
+
+        # 상하 2:3 고정 비율 (상단 40%, 하단 60%)
         if total_height > 0:
-            self.vertical_splitter.setSizes([int(total_height * 0.42), int(total_height * 0.58)])
+            top = int(total_height * 0.40)
+            bottom = max(1, total_height - top)
+            self.vertical_splitter.setSizes([top, bottom])
+
+    def _apply_preview_pixmap(self) -> None:
+        if not self._preview_original_pixmap or self._preview_original_pixmap.isNull():
+            return
+        target_width = self.preview_image_label.width()
+        target_height = self.preview_image_label.height()
+        if target_width <= 0 or target_height <= 0:
+            return
+        scaled = self._preview_original_pixmap.scaled(
+            target_width,
+            target_height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.preview_image_label.setPixmap(scaled)
 
     def closeEvent(self, event) -> None:
         if self.search_worker and self.search_worker.isRunning():

@@ -145,6 +145,13 @@ class MdiMainWindow(QMainWindow):
         self.info_btn.setObjectName('infoBtn')
         self.info_btn.clicked.connect(self.show_info)
         header_layout.addWidget(self.info_btn)
+        header_layout.addSpacing(8)
+        # 현재 도구 닫기 버튼
+        self.close_tool_btn = QPushButton('✕')
+        self.close_tool_btn.setObjectName('closeToolBtn')
+        self.close_tool_btn.setToolTip('현재 도구 닫기')
+        self.close_tool_btn.clicked.connect(self.close_current_tool)
+        header_layout.addWidget(self.close_tool_btn)
         return header
 
     def toggle_sidebar(self):
@@ -333,6 +340,29 @@ class MdiMainWindow(QMainWindow):
         # Update header and sidebar
         self.header_title.setText(tool_definition['window_title'])
         self.set_active_sidebar_button(tool_key)
+
+    def close_current_tool(self):
+        """현재 활성화된 도구 닫기"""
+        if not self.current_tool_widget:
+            return
+
+        # close()를 호출하여 closeEvent가 실행되도록 함 (스레드 정리)
+        self.current_tool_widget.close()
+        self.current_tool_widget.hide()
+
+        # 캐시에서도 제거 (완전히 닫기)
+        if self.current_tool_key in self.tool_cache:
+            widget = self.tool_cache.pop(self.current_tool_key)
+            self.tool_container_layout.removeWidget(widget)
+            widget.deleteLater()
+
+        # 상태 초기화
+        self.current_tool_widget = None
+        self.current_tool_key = None
+
+        # 헤더와 사이드바 초기화
+        self.header_title.setText(APP_NAME)
+        self.set_active_sidebar_button(None)
 
     def show_legend_caution_for_active_tool(self):
         # Find the active PDF compare widget
