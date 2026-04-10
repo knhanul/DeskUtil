@@ -840,6 +840,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from doc_search.extractors import get_extractor
+from .integrated_previewer import IntegratedPreviewer
 
 
 # Preview page indices for QStackedWidget
@@ -1502,40 +1503,27 @@ class DocumentSearchMainWindow(QMainWindow):
         return panel
 
     def _build_preview_panel(self) -> QWidget:
+        """통합 미리보기 패널 - QWebEngineView 기반"""
         panel = QFrame()
         panel.setObjectName("panelCard")
         # 미리보기 패널이 splitter 비율을 벗어나 확장되지 않도록 제한
         panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         self.preview_title = QLabel("미리보기")
         self.preview_title.setObjectName("sectionTitle")
         layout.addWidget(self.preview_title)
 
-        # QStackedWidget for dynamic preview content
-        self.preview_stack = QStackedWidget()
-        self.preview_stack.setObjectName("previewStack")
-        self.preview_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # 통합 미리보기 위젯 (QWebEngineView 기반)
+        self.integrated_previewer = IntegratedPreviewer()
+        self.integrated_previewer.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding
+        )
+        layout.addWidget(self.integrated_previewer, 1)
 
-        # Page 0: QLabel for image/PDF thumbnails
-        self.preview_image_label = QLabel()
-        self.preview_image_label.setObjectName("previewImage")
-        self.preview_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_image_label.setScaledContents(False)
-        self.preview_image_label.setMinimumHeight(200)
-        self.preview_image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        self.preview_stack.addWidget(self.preview_image_label)
-
-        # Page 1: QTextBrowser for HTML/text content
-        self.preview_text_browser = QTextBrowser()
-        self.preview_text_browser.setObjectName("previewTextBrowser")
-        self.preview_text_browser.setOpenExternalLinks(False)
-        self.preview_text_browser.setPlaceholderText("문서를 선택하면 미리보기가 표시됩니다.")
-        self.preview_stack.addWidget(self.preview_text_browser)
-
-        layout.addWidget(self.preview_stack, 1)
         return panel
 
     def _load_dummy_results_for_test(self) -> None:
@@ -1926,15 +1914,20 @@ class DocumentSearchMainWindow(QMainWindow):
             QMessageBox.warning(self, "파일 열기 오류", f"파일을 열 수 없습니다:\n{e}")
 
     def _open_folder(self, file_path: str) -> None:
-        """파일이 있는 폴더 열기"""
+        """파일이 있는 폴더 열기 - 파일 관리자 위젯에서 오른쪽 패널에 표시"""
         try:
             folder_path = os.path.dirname(file_path)
-            if os.name == 'nt':  # Windows
-                # Use shell=True for proper path handling with special characters
-                import subprocess
-                subprocess.run(f'explorer /select,"{file_path}"', shell=True, check=True)
-            else:  # macOS, Linux
-                subprocess.run(['xdg-open', folder_path], check=True)
+            
+            # 메인 윈도우에 파일 관리자 열기 요청
+            main_window = self.window()
+            if main_window and hasattr(main_window, 'open_file_manager_with_folder'):
+                main_window.open_file_manager_with_folder(folder_path)
+            else:
+                # 메인 윈도우 메서드가 없으면 시스템 탐색기로 폴백
+                if os.name == 'nt':  # Windows
+                    subprocess.run(f'explorer /select,"{file_path}"', shell=True, check=True)
+                else:  # macOS, Linux
+                    subprocess.run(['xdg-open', folder_path], check=True)
         except Exception as e:
             QMessageBox.warning(self, "폴더 열기 오류", f"폴더를 열 수 없습니다:\n{e}")
 
@@ -2063,29 +2056,16 @@ class DocumentSearchMainWindow(QMainWindow):
             self.search_worker.cancel()
 
     def _load_preview(self, file_path: str, preview: str, file_name: str) -> None:
-        """파일 확장자별 동적 미리보기 로드"""
+        """통합 미리보기 로드 - QWebEngineView 기반"""
         self.preview_title.setText(file_name if file_name else "미리보기")
         self.current_preview_path = file_path
         
         if not file_path or not Path(file_path).exists():
-            self._show_preview_error("파일을 찾을 수 없습니다.")
+            self.integrated_previewer._show_error("파일을 찾을 수 없습니다.")
             return
         
-        suffix = Path(file_path).suffix.lower()
-        
-        try:
-            if suffix == '.pdf':
-                self._render_pdf_preview(file_path)
-            elif suffix in {'.xlsx', '.csv', '.cell'}:
-                self._render_spreadsheet_preview(file_path, suffix)
-            elif suffix in {'.hwp', '.hwpx', '.docx', '.txt'}:
-                self._render_text_preview(file_path, preview)
-            else:
-                # 기타 형식은 기존 preview 텍스트 사용
-                self._render_plain_preview(preview)
-        except Exception as e:
-            print(f"[Preview] Error loading preview for {file_path}: {e}")
-            self._show_preview_error("미리보기를 지원하지 않거나 파일을 읽을 수 없습니다.")
+        # 통합 미리보기 위젯에 파일 로드 (비동기)
+        self.integrated_previewer.preview_file(file_path, file_name or Path(file_path).name)
 
     def _update_checked_paths_label(self) -> None:
         checked_folders = sorted(self.checked_folder_paths_set)
@@ -2398,44 +2378,16 @@ class DocumentSearchMainWindow(QMainWindow):
         self._render_plain_preview(preview_text)
 
     def _clear_preview(self) -> None:
-        """미리보기 초기화"""
+        """미리보기 초기화 - 통합 미리보기 사용"""
         if hasattr(self, 'result_view'):
             self.result_view.clearSelection()
         self.preview_title.setText("미리보기")
         self.current_preview_path = ''
         self._preview_original_pixmap = None
-        if hasattr(self, 'preview_image_label'):
-            self.preview_image_label.clear()
         
-        # 스택 위젯을 텍스트 페이지로 전환하고 기본 메시지 표시
-        self.preview_stack.setCurrentIndex(PREVIEW_PAGE_TEXT)
-        self.preview_text_browser.setHtml("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {
-                    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
-                    margin: 0;
-                    padding: 40px 20px;
-                    background: #F2F2F7;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    min-height: 200px;
-                }
-                .placeholder {
-                    text-align: center;
-                    color: #8E8E93;
-                    font-size: 14px;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="placeholder">문서를 선택하면 미리보기가 표시됩니다.</div>
-        </body>
-        </html>
-        """)
+        # 통합 미리보기 클리어
+        if hasattr(self, 'integrated_previewer'):
+            self.integrated_previewer.clear_preview()
         
         # 진행 상태 초기화 (검색 시작 전 상태로)
         if not self.search_worker or not self.search_worker.isRunning():
@@ -2794,6 +2746,11 @@ class DocumentSearchMainWindow(QMainWindow):
         self.preview_image_label.setPixmap(scaled)
 
     def closeEvent(self, event) -> None:
+        # 통합 미리보기 정리
+        if hasattr(self, 'integrated_previewer'):
+            self.integrated_previewer.cleanup()
+        
+        # 검색 작업 취소
         if self.search_worker and self.search_worker.isRunning():
             self.search_worker.cancel()
             self.search_worker.wait(2000)

@@ -364,6 +364,20 @@ class MdiMainWindow(QMainWindow):
         self.header_title.setText(APP_NAME)
         self.set_active_sidebar_button(None)
 
+    def open_file_manager_with_folder(self, folder_path: str) -> None:
+        """파일 관리자를 열고 오른쪽 패널에 폴더 표시"""
+        if not folder_path or not os.path.isdir(folder_path):
+            return
+
+        # 파일 관리자 도구 열기
+        tool_key = 'dual_pane_manager'
+        self.open_tool(tool_key)
+
+        # 파일 관리자 위젯이 로드된 후 폴더 전달
+        if self.current_tool_key == tool_key and self.current_tool_widget:
+            if hasattr(self.current_tool_widget, 'open_folder_in_right_pane'):
+                self.current_tool_widget.open_folder_in_right_pane(folder_path)
+
     def show_legend_caution_for_active_tool(self):
         # Find the active PDF compare widget
         if self.current_tool_key in ('pdf_compare', 'pdf_hf_compare') and self.current_tool_widget:

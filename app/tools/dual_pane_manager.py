@@ -622,6 +622,17 @@ class DualPaneManager(QWidget):
                 continue
             target.path_edit.setStyleSheet(self.ACTIVE_EDIT_STYLE if target is pane else self.INACTIVE_EDIT_STYLE)
 
+    def open_folder_in_right_pane(self, folder_path: str) -> None:
+        """외부에서 호출하여 오른쪽 패널에 폴더 열기 (문서 찾기 등에서 사용)"""
+        if not self.right_pane:
+            return
+        if not folder_path or not os.path.isdir(folder_path):
+            return
+        
+        # 오른쪽 패널을 활성화하고 폴더 로드
+        self._set_active_pane(self.right_pane)
+        self._load_directory(self.right_pane, folder_path)
+    
     def _on_drive_changed(self, pane: PaneWidgets):
         drive_path = pane.drive_combo.currentData()
         if drive_path:
