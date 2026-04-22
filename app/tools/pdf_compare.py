@@ -451,7 +451,7 @@ class PDFViewer(QScrollArea):
                 if i > 0 and (line[i - 1]['char'].strip() == '' or abs(c['x'] - line[i - 1]['bbox'][2]) > 2.5):
                     word_counter += 1
                 clean_char = c['char'].lower().strip()
-                if not re.match(r'[가-힣a-z0-9]', clean_char):
+                if not re.match(r'[가-힣a-z0-9.,?!;:()\-\[\]{}\'"]', clean_char):
                     continue
                 if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
                     final_norm.append({'char': clean_char, 'bbox': c['bbox'], 'x': c['x'], 'page': page_num, 'word_id': word_counter})
