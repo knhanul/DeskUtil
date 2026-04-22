@@ -7,8 +7,8 @@ import fitz
 from PyQt6.QtCore import QRect, QTimer, Qt
 from PyQt6.QtGui import QColor, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from app.common.resources import get_timer_gif_path

@@ -2,8 +2,45 @@ import os
 import sys
 from configs.settings import SETTINGS
 
-VERSION = '1.2.0'
-RELEASE_DATE = os.environ.get('PDF_COMPARE_RELEASE_DATE', '2025-12-31')
+# 빌드 버전 파일에서 읽기 (빌드된 실행 파일용)
+def _read_build_version():
+    try:
+        # PyInstaller 환경인지 확인
+        if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
+            version_file = os.path.join(sys._MEIPASS, 'app', 'common', 'build_version.txt')
+        else:
+            version_file = os.path.join(os.path.dirname(__file__), 'build_version.txt')
+        
+        if os.path.exists(version_file):
+            with open(version_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('APP_VERSION='):
+                        return line.split('=', 1)[1]
+    except:
+        pass
+    return None
+
+def _read_build_release_date():
+    try:
+        # PyInstaller 환경인지 확인
+        if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
+            version_file = os.path.join(sys._MEIPASS, 'app', 'common', 'build_version.txt')
+        else:
+            version_file = os.path.join(os.path.dirname(__file__), 'build_version.txt')
+        
+        if os.path.exists(version_file):
+            with open(version_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('PDF_COMPARE_RELEASE_DATE='):
+                        return line.split('=', 1)[1]
+    except:
+        pass
+    return None
+
+VERSION = _read_build_version() or os.environ.get('APP_VERSION', '1.2.0')
+RELEASE_DATE = _read_build_release_date() or os.environ.get('PDF_COMPARE_RELEASE_DATE', '2025-12-31')
 DEVELOPER = SETTINGS['COMPANY_NAME']
 APP_NAME = SETTINGS['APP_NAME']
 COMPANY_NAME = SETTINGS['COMPANY_NAME']
@@ -38,7 +75,9 @@ def get_resource_path(relative_path):
 
 
 def get_logo_path():
-    for candidate in _candidate_paths('posid_logo.png'):
+    build_target = SETTINGS.get('BUILD_TARGET', 'posid')
+    logo_key = f'{build_target}_logo.png'
+    for candidate in _candidate_paths(logo_key):
         if os.path.exists(candidate):
             return candidate
     return None

@@ -1,18 +1,43 @@
 import importlib
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_TARGET = 'posid'
 TARGET_MODULES = {
     'posid': 'configs.target_posid',
-    'qamate': 'configs.target_qamate',
+    'post': 'configs.target_post',
     'nuni': 'configs.target_nuni',
 }
 
 
+def _detect_target_from_executable():
+    """실행 파일 이름에서 타겟 추출"""
+    try:
+        # PyInstaller 빌드된 환경인지 확인
+        if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
+            exe_path = sys.executable
+            exe_name = Path(exe_path).stem.lower()
+            
+            # 실행 파일 이름에서 타겟 추출 (예: nunidesk_post.exe -> post)
+            for target in TARGET_MODULES.keys():
+                if f'_{target}' in exe_name or exe_name.endswith(target):
+                    return target
+    except:
+        pass
+    return None
+
+
 def _load_target():
-    build_target = os.environ.get('BUILD_TARGET', DEFAULT_TARGET).strip().lower()
+    # 환경변수 우선, 없으면 실행 파일 이름에서 추출, 없으면 기본값
+    build_target = os.environ.get('BUILD_TARGET')
+    if not build_target:
+        build_target = _detect_target_from_executable()
+    if not build_target:
+        build_target = DEFAULT_TARGET
+    
+    build_target = build_target.strip().lower()
     module_name = TARGET_MODULES.get(build_target, TARGET_MODULES[DEFAULT_TARGET])
     module = importlib.import_module(module_name)
     target = dict(module.TARGET)
