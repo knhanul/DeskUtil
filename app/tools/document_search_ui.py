@@ -946,7 +946,7 @@ class CustomResultWidget(QWidget):
 class SearchWorker(QThread):
     result_found = Signal(str, str, str, str, str, str, str, str)
     progress_changed = Signal(int, int, str)
-    search_finished = Signal(int, int, bool)
+    search_finished = Signal(int, int, int, bool)  # (found, scanned, skipped, cancelled)
     search_failed = Signal(str)
 
     def __init__(self, folder_paths: list[str], query: str, allowed_extensions: set[str], parent=None) -> None:
@@ -965,19 +965,23 @@ class SearchWorker(QThread):
             files = self._collect_files()
             total = len(files)
             found = 0
+            skipped = 0
             print(f"[DocumentSearch] collected_files={total}")
 
             for index, file_path in enumerate(files, start=1):
                 if self._is_cancelled:
-                    print(f"[DocumentSearch] cancelled scanned={index - 1} found={found}")
-                    self.search_finished.emit(found, index - 1, True)
+                    print(f"[DocumentSearch] cancelled scanned={index - 1} found={found} skipped={skipped}")
+                    self.search_finished.emit(found, index - 1, skipped, True)
                     return
 
                 self.progress_changed.emit(index, total, file_path)
                 if index <= 5 or index % 50 == 0:
                     print(f"[DocumentSearch] scanning {index}/{total}: {file_path}")
                 text = self._extract_text(file_path)
-                if not text:
+                if text is None:  # 추출 실패 (암호화 등)
+                    skipped += 1
+                    continue
+                if not text:  # 빈 텍스트
                     continue
 
                 if self.query in text.lower():
@@ -996,8 +1000,8 @@ class SearchWorker(QThread):
                         extension.upper(),
                     )
 
-            print(f"[DocumentSearch] finished scanned={total} found={found}")
-            self.search_finished.emit(found, total, False)
+            print(f"[DocumentSearch] finished scanned={total} found={found} skipped={skipped}")
+            self.search_finished.emit(found, total, skipped, False)
         except Exception as exc:
             print(f"[DocumentSearch] failed: {exc}")
             self.search_failed.emit(str(exc))
@@ -1115,14 +1119,15 @@ class SearchWorker(QThread):
         
         return file_paths
 
-    def _extract_text(self, file_path: str) -> str:
+    def _extract_text(self, file_path: str) -> str | None:
         extractor = get_extractor(file_path)
         if extractor is None:
-            return ''
+            return None
         try:
-            return extractor.extract_text(file_path) or ''
+            text = extractor.extract_text(file_path)
+            return text or None
         except Exception:
-            return ''
+            return None
 
     def _build_snippet(self, text: str) -> str:
         lower_text = text.lower()
@@ -1984,7 +1989,7 @@ class DocumentSearchMainWindow(QMainWindow):
         
         # 진행 정보는 검색 조건 탭에서만 표시됨
 
-    def _finish_search(self, found_count: int, scanned_count: int, cancelled: bool) -> None:
+    def _finish_search(self, found_count: int, scanned_count: int, skipped_count: int, cancelled: bool) -> None:
         self.search_button.setEnabled(True)
         self.folder_tree.setEnabled(True)
         self.cancel_button.setVisible(False)
@@ -1994,7 +1999,14 @@ class DocumentSearchMainWindow(QMainWindow):
             self.result_stack.setCurrentIndex(1)
         else:
             self.result_stack.setCurrentIndex(0)
-        print(f"[DocumentSearch] finish signal scanned={scanned_count} found={found_count} cancelled={cancelled}")
+        
+        # 확인 어려운 파일 건수 표시
+        if skipped_count > 0:
+            self.progress_details.setText(f"검색 완료 - 확인 어려운 파일: {skipped_count}건")
+        else:
+            self.progress_details.setText("검색 완료")
+        
+        print(f"[DocumentSearch] finish signal scanned={scanned_count} found={found_count} skipped={skipped_count} cancelled={cancelled}")
         
         # 진행 바 완료 처리
         self.progress_bar.setValue(100)

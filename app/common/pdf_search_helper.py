@@ -33,13 +33,13 @@ class PDFSearchHelper:
         self.find_prev_btn = QPushButton('Prev')
         self.find_prev_btn.setObjectName('toolbarBtn')
         self.find_prev_btn.setFixedSize(50, 28)
-        self.find_prev_btn.setStyleSheet('font-size: 11px;')
+        self.find_prev_btn.setStyleSheet('font-size: 11px; padding: 0px; margin: 0px;')
         self.find_prev_btn.clicked.connect(self.find_previous)
 
         self.find_next_btn = QPushButton('Next')
         self.find_next_btn.setObjectName('toolbarBtn')
         self.find_next_btn.setFixedSize(50, 28)
-        self.find_next_btn.setStyleSheet('font-size: 11px;')
+        self.find_next_btn.setStyleSheet('font-size: 11px; padding: 0px; margin: 0px;')
         self.find_next_btn.clicked.connect(self.find_next)
         
         # Search count label

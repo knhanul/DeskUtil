@@ -157,40 +157,64 @@ class PDFViewer(QScrollArea):
         self.toolbar.setFixedHeight(40)
         toolbar_layout = QHBoxLayout(self.toolbar)
         toolbar_layout.setContentsMargins(8, 4, 8, 4)
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setSpacing(0)
         
         # Zoom controls - enlarged for visibility
         self.zoom_in_btn = QPushButton('🔍+')
         self.zoom_in_btn.setObjectName('toolbarBtn')
         self.zoom_in_btn.setFixedSize(50, 34)
-        self.zoom_in_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_in_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
         self.zoom_in_btn.setToolTip('확대')
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         
         self.zoom_out_btn = QPushButton('🔍-')
         self.zoom_out_btn.setObjectName('toolbarBtn')
         self.zoom_out_btn.setFixedSize(50, 34)
-        self.zoom_out_btn.setStyleSheet('font-size: 14px;')
+        self.zoom_out_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
         self.zoom_out_btn.setToolTip('축소')
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         
         self.fit_width_btn = QPushButton('너비맞춤')
         self.fit_width_btn.setObjectName('toolbarBtn')
         self.fit_width_btn.setFixedHeight(34)
-        self.fit_width_btn.setStyleSheet('font-size: 12px;')
+        self.fit_width_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
         self.fit_width_btn.setToolTip('너비에 맞춤')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
         
         self.fit_page_btn = QPushButton('페이지맞춤')
         self.fit_page_btn.setObjectName('toolbarBtn')
         self.fit_page_btn.setFixedHeight(34)
-        self.fit_page_btn.setStyleSheet('font-size: 12px;')
+        self.fit_page_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
         self.fit_page_btn.setToolTip('페이지에 맞춤')
         self.fit_page_btn.clicked.connect(self.fit_to_page)
         
         self.zoom_label = QLabel(f'{int(self.scale * 100)}%')
         self.zoom_label.setObjectName('toolbarLabel')
         self.zoom_label.setFixedWidth(50)
+        
+        # Page navigation
+        self.page_nav_label = QLabel('페이지')
+        self.page_nav_label.setObjectName('toolbarLabel')
+        self.page_nav_label.setFixedWidth(36)
+        
+        self.page_spin = QLineEdit()
+        self.page_spin.setObjectName('pageSpin')
+        self.page_spin.setFixedSize(50, 30)
+        self.page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_spin.setStyleSheet('font-size: 12px;')
+        self.page_spin.setPlaceholderText('1')
+        self.page_spin.returnPressed.connect(self._on_page_return_pressed)
+        
+        self.page_total_label = QLabel('/ 0')
+        self.page_total_label.setObjectName('toolbarLabel')
+        self.page_total_label.setFixedWidth(50)
+        
+        self.go_page_btn = QPushButton('이동')
+        self.go_page_btn.setObjectName('toolbarBtn')
+        self.go_page_btn.setFixedSize(40, 30)
+        self.go_page_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
+        self.go_page_btn.setToolTip('해당 페이지로 이동')
+        self.go_page_btn.clicked.connect(self._on_goto_page)
         
         # Initialize search helper
         self.search_helper = PDFSearchHelper(self)
@@ -201,6 +225,13 @@ class PDFViewer(QScrollArea):
         toolbar_layout.addWidget(self.fit_width_btn)
         toolbar_layout.addWidget(self.fit_page_btn)
         toolbar_layout.addWidget(self.zoom_label)
+        toolbar_layout.addSpacing(16)
+        
+        # Page navigation controls
+        toolbar_layout.addWidget(self.page_nav_label)
+        toolbar_layout.addWidget(self.page_spin)
+        toolbar_layout.addWidget(self.page_total_label)
+        toolbar_layout.addWidget(self.go_page_btn)
         toolbar_layout.addSpacing(16)
         
         # Setup search UI using helper
@@ -264,6 +295,22 @@ class PDFViewer(QScrollArea):
         self.vbox.addWidget(self.open_pdf_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         
         self.parent_tool = None  # Reference to parent tool for callback
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_page_changed)
+
+    def _on_scroll_page_changed(self):
+        if not self.page_labels:
+            return
+        scroll_y = self.verticalScrollBar().value()
+        viewport_h = self.viewport().height()
+        mid_y = scroll_y + viewport_h / 2
+        page_top = self.vbox.contentsMargins().top()
+        for i, lbl in enumerate(self.page_labels):
+            lbl_h = lbl.height()
+            lbl_mid = page_top + lbl_h / 2
+            if mid_y < lbl_mid + lbl_h / 2:
+                self.page_spin.setText(str(i + 1))
+                break
+            page_top += lbl_h + self.vbox.spacing()
 
     def load_pdf(self, path):
         try:
@@ -366,7 +413,9 @@ class PDFViewer(QScrollArea):
             lbl.setParent(None)
         self.page_labels.clear()
         self.page_base_pixmaps.clear()
-        for i in range(len(self.pdf_doc)):
+        total_pages = len(self.pdf_doc)
+        self.page_total_label.setText(f'/ {total_pages}')
+        for i in range(total_pages):
             page = self.pdf_doc.load_page(i)
             pix = page.get_pixmap(matrix=fitz.Matrix(self.scale, self.scale))
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
@@ -459,6 +508,35 @@ class PDFViewer(QScrollArea):
         self.char_data = final_norm
         self.raw_text = '\n'.join(raw_lines)
 
+    def _on_page_return_pressed(self):
+        self._on_goto_page()
+    
+    def _on_goto_page(self):
+        if not self.pdf_doc:
+            return
+        text = self.page_spin.text().strip()
+        if not text:
+            return
+        try:
+            page_num = int(text)
+        except ValueError:
+            return
+        self.goto_page(page_num)
+    
+    def goto_page(self, page_num):
+        if not self.pdf_doc or not self.page_labels:
+            return
+        total = len(self.page_labels)
+        if page_num < 1:
+            page_num = 1
+        if page_num > total:
+            page_num = total
+        idx = page_num - 1
+        lbl = self.page_labels[idx]
+        y = lbl.y()
+        self.verticalScrollBar().setValue(y)
+        self.page_spin.setText(str(page_num))
+    
     def zoom_in(self):
         self.scale *= 1.2
         self.update_zoom_label()
