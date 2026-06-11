@@ -264,8 +264,8 @@ class MdiMainWindow(QMainWindow):
             },
             {
                 'key': 'pdf_hf_compare',
-                'menu_title': '📄 PDF 출력물 비교',
-                'window_title': 'PDF 출력물 비교',
+                'menu_title': '📄 PDF 전체 비교',
+                'window_title': 'PDF 전체 비교',
                 'module_path': 'app.tools.pdf_header_footer_compare',
                 'class_name': 'HFCompareWidget',
                 'singleton': True,

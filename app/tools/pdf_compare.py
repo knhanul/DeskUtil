@@ -503,7 +503,7 @@ class PDFViewer(QScrollArea):
                 if not re.match(r'[가-힣a-z0-9.,?!;:()\-\[\]{}\'"]', clean_char):
                     continue
                 if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
-                    final_norm.append({'char': clean_char, 'bbox': c['bbox'], 'x': c['x'], 'page': page_num, 'word_id': word_counter})
+                    final_norm.append({'char': clean_char, 'bbox': c['bbox'], 'x': c['x'], 'y': c['y'], 'page': page_num, 'word_id': word_counter})
             raw_lines.append(''.join(line_str_raw))
         self.char_data = final_norm
         self.raw_text = '\n'.join(raw_lines)
@@ -751,17 +751,25 @@ class PdfCompareWidget(QWidget):
         bottom_action_layout.setContentsMargins(12, 8, 12, 8)
         bottom_action_layout.setSpacing(10)
 
-        # Left: Extract data button (secondary)
+        # Extract data button (secondary) - 가장 왼쪽
         self.btn_view_text = QPushButton('📋  추출 데이터 확인')
         self.btn_view_text.setObjectName('secondaryBtn')
         self.btn_view_text.setFixedHeight(40)
         self.btn_view_text.setMinimumWidth(150)
         bottom_action_layout.addWidget(self.btn_view_text)
 
+        # Result list button - 추출데이터확인 오른쪽
+        self.btn_diff_list = QPushButton('📋 비교결과')
+        self.btn_diff_list.setObjectName('secondaryBtn')
+        self.btn_diff_list.setFixedHeight(40)
+        self.btn_diff_list.setMinimumWidth(100)
+        self.btn_diff_list.clicked.connect(self.show_diff_list_dialog)
+        bottom_action_layout.addWidget(self.btn_diff_list)
+
         bottom_action_layout.addStretch()
 
         # Center: Compare button (primary)
-        self.btn_compare = QPushButton('⚡  비교 실행')
+        self.btn_compare = QPushButton('▶️  비교 실행')
         self.btn_compare.setObjectName('compareBtn')
         self.btn_compare.setFixedHeight(42)
         self.btn_compare.setMinimumWidth(150)
@@ -791,6 +799,7 @@ class PdfCompareWidget(QWidget):
         
         # Thread manager for async comparison
         self.compare_manager = None
+        self.diff_list = []  # 비교 결과 목록 저장
 
         self.btn_compare.clicked.connect(self.request_comparison)
         self.btn_reset_all.clicked.connect(self.request_reset_all)
@@ -1020,7 +1029,96 @@ class PdfCompareWidget(QWidget):
             self.viewer2.diff_pages = result.get('diff_pages2', [])
             self.viewer1.diff_index = -1
             self.viewer2.diff_index = -1
-            
+
+            # diff_list 채우기
+            opcodes = result.get('opcodes', [])
+            self.diff_list = []
+
+            # diff_pages 처리 (리스트 또는 튜플일 수 있음)
+            diff_pages1 = result.get('diff_pages1', [])
+            diff_pages2 = result.get('diff_pages2', [])
+            if isinstance(diff_pages1, tuple):
+                diff_pages1 = list(diff_pages1)
+            if isinstance(diff_pages2, tuple):
+                diff_pages2 = list(diff_pages2)
+
+            # 선택 영역 좌표 가져오기
+            sel_rect1 = self.viewer1.pending_selection_rect
+            sel_rect2 = self.viewer2.pending_selection_rect
+
+            # 페이지 높이 가져오기
+            page_height1 = 0
+            page_height2 = 0
+            if self.viewer1.pdf_doc and sel_rect1:
+                page_height1 = self.viewer1.pdf_doc.load_page(sel_rect1[0]).rect.height
+            if self.viewer2.pdf_doc and sel_rect2:
+                page_height2 = self.viewer2.pdf_doc.load_page(sel_rect2[0]).rect.height
+
+            for tag, i1, i2, j1, j2 in opcodes:
+                if tag == 'equal':
+                    continue
+                if tag in ('delete', 'replace'):
+                    diff_text = ''
+                    if i1 < len(self.last_s1_norm):
+                        diff_text = self.last_s1_norm[i1:i2] if i2 <= len(self.last_s1_norm) else self.last_s1_norm[i1:]
+                    # PDF 1의 페이지 번호는 char_data에서 직접 가져오기
+                    page_num = 0
+                    if self.viewer1.char_data and i1 < len(self.viewer1.char_data):
+                        page_num = self.viewer1.char_data[i1].get('page', 0) + 1  # 1-indexed
+                    elif diff_pages1 and isinstance(diff_pages1[0], dict):
+                        page_num = diff_pages1[0].get('page', 0) + 1
+                    
+                    pos_info = ''
+                    if self.viewer1.char_data and i1 < len(self.viewer1.char_data):
+                        char = self.viewer1.char_data[i1]
+                        if 'bbox' in char:
+                            char_y = char.get('y', 0)
+                            if page_height1 > 0:
+                                # 페이지 전체 기준 백분율
+                                percent = (char_y / page_height1) * 100
+                                percent = max(0, min(100, percent))
+                                pos_info = f"(위에서 {percent:.0f}% 지점)"
+                            else:
+                                pos_info = f"(위에서 {char_y:.0f}px 지점)"
+                    self.diff_list.append({
+                        'type': 'delete' if tag == 'delete' else 'replace',
+                        'pdf': 'PDF 1',
+                        'page': page_num,
+                        'position': pos_info,
+                        'text': diff_text[:100]
+                    })
+                if tag in ('insert', 'replace'):
+                    diff_text = ''
+                    if j1 < len(self.last_s2_norm):
+                        diff_text = self.last_s2_norm[j1:j2] if j2 <= len(self.last_s2_norm) else self.last_s2_norm[j1:]
+                    
+                    # PDF 2의 페이지 번호는 char_data에서 직접 가져오기
+                    page_num = 0
+                    if self.viewer2.char_data and j1 < len(self.viewer2.char_data):
+                        page_num = self.viewer2.char_data[j1].get('page', 0) + 1  # 1-indexed
+                    elif diff_pages2 and isinstance(diff_pages2[0], dict):
+                        page_num = diff_pages2[0].get('page', 0) + 1
+                    
+                    pos_info = ''
+                    if self.viewer2.char_data and j1 < len(self.viewer2.char_data):
+                        char = self.viewer2.char_data[j1]
+                        if 'bbox' in char:
+                            char_y = char.get('y', 0)
+                            if page_height2 > 0:
+                                # 페이지 전체 기준 백분율
+                                percent = (char_y / page_height2) * 100
+                                percent = max(0, min(100, percent))
+                                pos_info = f"(위에서 {percent:.0f}% 지점)"
+                            else:
+                                pos_info = f"(위에서 {char_y:.0f}px 지점)"
+                    self.diff_list.append({
+                        'type': 'insert' if tag == 'insert' else 'replace',
+                        'pdf': 'PDF 2',
+                        'page': page_num,
+                        'position': pos_info,
+                        'text': diff_text[:100]
+                    })
+
             # 뷰어 갱신 (최적화: visible 페이지만 우선 갱신)
             self._refresh_viewers_optimized()
             
@@ -1266,3 +1364,122 @@ class PdfCompareWidget(QWidget):
             viewer.word_highlights[page_num] = []
         if not any(h[0] == info['bbox'] and h[1] == color for h in viewer.word_highlights[page_num]):
             viewer.word_highlights[page_num].append((info['bbox'], color))
+
+    def show_diff_list_dialog(self):
+        """비교 결과 목록을 팝업으로 표시"""
+        if not self.diff_list:
+            QMessageBox.information(self, '결과 목록', '비교 결과가 없습니다. 먼저 비교를 실행해주세요.')
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('📋 비교 결과 목록')
+        dialog.setFixedSize(700, 500)
+        dialog.setStyleSheet(MODERN_QSS)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 결과 요약
+        total = len(self.diff_list)
+        delete_count = sum(1 for d in self.diff_list if d['type'] == 'delete')
+        insert_count = sum(1 for d in self.diff_list if d['type'] == 'insert')
+        replace_count = sum(1 for d in self.diff_list if d['type'] == 'replace')
+
+        summary = QLabel(
+            f"<div style='font-size:14px; margin-bottom:15px;'>"
+            f"<b>총 {total}개 차이점</b> | "
+            f"<span style='color:#FF9500;'>삭제: {delete_count}</span> | "
+            f"<span style='color:#34C759;'>추가: {insert_count}</span> | "
+            f"<span style='color:#007AFF;'>변경: {replace_count}</span>"
+            f"</div>"
+        )
+        layout.addWidget(summary)
+
+        # 결과 리스트 위젯
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        list_widget = QListWidget()
+        list_widget.setSpacing(5)
+
+        for i, diff in enumerate(self.diff_list):
+            type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
+            type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
+            pos = diff.get('position', '')
+
+            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}"
+            item = QListWidgetItem(item_text)
+            item.setData(1, diff)
+            list_widget.addItem(item)
+
+        def on_item_clicked(item):
+            diff = item.data(1)
+            if not diff:
+                return
+            page_num = diff.get('page', 1) - 1
+            viewer = self.viewer1 if diff.get('pdf') == 'PDF 1' else self.viewer2
+            if viewer and viewer.page_labels and page_num < len(viewer.page_labels):
+                lbl = viewer.page_labels[page_num]
+
+                pos_str = diff.get('position', '')
+                import re
+                percent = None
+                match = re.search(r'(\d+)%', pos_str)
+                if match:
+                    percent = int(match.group(1)) / 100
+
+                def scroll_to_target():
+                    page_top = lbl.y()
+                    page_height_px = lbl.height() if lbl.height() > 0 else 1
+                    target_y = page_top
+                    if percent is not None:
+                        target_y = page_top + page_height_px * percent
+                    target_scroll = int(target_y - viewer.viewport().height() / 2)
+                    target_scroll = max(0, min(target_scroll, viewer.verticalScrollBar().maximum()))
+                    viewer.verticalScrollBar().setValue(target_scroll)
+
+                QTimer.singleShot(0, scroll_to_target)
+
+        list_widget.itemClicked.connect(on_item_clicked)
+
+        layout.addWidget(list_widget)
+
+        # 버튼 행
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        # 전체 복사 버튼
+        copy_btn = QPushButton('📋 전체 복사')
+        copy_btn.setObjectName('secondaryBtn')
+        copy_btn.setFixedHeight(38)
+        copy_btn.setMinimumWidth(100)
+        copy_btn.clicked.connect(lambda: self._copy_diff_list_to_clipboard(list_widget))
+        btn_layout.addWidget(copy_btn)
+
+        btn_layout.addStretch()
+
+        # 닫기 버튼
+        close_btn = QPushButton('닫기')
+        close_btn.setObjectName('actionBtn')
+        close_btn.setFixedHeight(38)
+        close_btn.setMinimumWidth(80)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+        self.diff_list_dialog = dialog
+        dialog.show()
+
+    def _copy_diff_list_to_clipboard(self, list_widget):
+        """결과 목록을 클립보드에 복사"""
+        if not self.diff_list:
+            return
+        lines = []
+        for diff in self.diff_list:
+            type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
+            type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
+            pos = diff.get('position', '')
+            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}")
+        text = '\n'.join(lines)
+        QApplication.clipboard().setText(text)
+        QMessageBox.information(self, '복사 완료', '결과 목록이 클립보드에 복사되었습니다.')

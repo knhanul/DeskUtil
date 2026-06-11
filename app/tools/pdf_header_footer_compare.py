@@ -573,7 +573,7 @@ class HFViewer(QScrollArea):
                 if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
                     final_norm.append({
                         'char': clean_char, 'bbox': c['bbox'],
-                        'x': c['x'], 'page': page_num, 'word_id': word_counter
+                        'x': c['x'], 'y': c['y'], 'page': page_num, 'word_id': word_counter
                     })
             raw_lines.append(''.join(line_str_raw))
         self.char_data = final_norm
@@ -714,6 +714,7 @@ class HFCompareWidget(QWidget):
         
         # Thread manager for async comparison
         self.compare_manager = None
+        self.diff_list = []  # 비교 결과 목록 저장
         
         self._build_ui()
 
@@ -841,9 +842,17 @@ class HFCompareWidget(QWidget):
         self.sync_scroll_enabled = False
         bl.addWidget(self.sync_scroll_cb)
 
+        # 결과 목록 버튼 - 동시 스크롤 오른쪽
+        self.btn_diff_list = QPushButton('📋 비교결과')
+        self.btn_diff_list.setObjectName('secondaryBtn')
+        self.btn_diff_list.setFixedHeight(40)
+        self.btn_diff_list.setMinimumWidth(100)
+        self.btn_diff_list.clicked.connect(self.show_diff_list_dialog)
+        bl.addWidget(self.btn_diff_list)
+
         bl.addStretch()
 
-        self.btn_compare = QPushButton('⚡  비교 실행')
+        self.btn_compare = QPushButton('▶️  비교 실행')
         self.btn_compare.setObjectName('compareBtn')
         self.btn_compare.setFixedHeight(42)
         self.btn_compare.setMinimumWidth(150)
@@ -869,18 +878,32 @@ class HFCompareWidget(QWidget):
         """viewer1 스크롤 시 viewer2 동기화"""
         if not self._syncing and self.sync_scroll_enabled:
             self._syncing = True
-            target_anchor = self._find_partner_anchor(self.viewer1.get_scroll_anchor(), source_index=0)
+            source_anchor = self.viewer1.get_scroll_anchor()
+            target_anchor = self._find_partner_anchor(source_anchor, source_index=0)
             if target_anchor:
                 self.viewer2.scroll_to_anchor(target_anchor)
+            elif source_anchor:
+                # 페이지 수준 폴백: 같은 페이지로 이동
+                src_page = source_anchor[0]
+                if self.viewer2.page_labels and 0 <= src_page < len(self.viewer2.page_labels):
+                    self.viewer2.page_spin.setText(str(src_page + 1))
+                    self.viewer2._on_page_return_pressed()
             self._syncing = False
 
     def _sync2(self, v):
         """viewer2 스크롤 시 viewer1 동기화"""
         if not self._syncing and self.sync_scroll_enabled:
             self._syncing = True
-            target_anchor = self._find_partner_anchor(self.viewer2.get_scroll_anchor(), source_index=1)
+            source_anchor = self.viewer2.get_scroll_anchor()
+            target_anchor = self._find_partner_anchor(source_anchor, source_index=1)
             if target_anchor:
                 self.viewer1.scroll_to_anchor(target_anchor)
+            elif source_anchor:
+                # 페이지 수준 폴백: 같은 페이지로 이동
+                src_page = source_anchor[0]
+                if self.viewer1.page_labels and 0 <= src_page < len(self.viewer1.page_labels):
+                    self.viewer1.page_spin.setText(str(src_page + 1))
+                    self.viewer1._on_page_return_pressed()
             self._syncing = False
 
     def toggle_sync_scroll(self, checked):
@@ -1034,8 +1057,14 @@ class HFCompareWidget(QWidget):
             self.viewer1.diff_index = -1
             self.viewer2.diff_index = -1
             
-            # Anchor pairs 복원 (동기화용)
+            # Anchor pairs 복원 (동기화용) 및 diff_list 채우기
             opcodes = result.get('opcodes', [])
+            self.diff_list = []
+
+            # 페이지 높이 캐시
+            page_heights1 = {}
+            page_heights2 = {}
+
             for tag, i1, i2, j1, j2 in opcodes:
                 if tag == 'equal':
                     continue
@@ -1045,8 +1074,76 @@ class HFCompareWidget(QWidget):
                     self.sync_anchor_pairs.append((left_anchor, right_anchor))
                 if tag in ('delete', 'replace'):
                     self._append_compared_area(self.viewer1, i1, i2)
+                    diff_text = ''
+                    if i1 < len(self.last_s1_norm):
+                        diff_text = self.last_s1_norm[i1:i2] if i2 <= len(self.last_s1_norm) else self.last_s1_norm[i1:]
+                    pos_info = ''
+                    if self.viewer1.char_data and i1 < len(self.viewer1.char_data):
+                        char = self.viewer1.char_data[i1]
+                        if 'bbox' in char:
+                            char_y = char.get('y', 0)
+                            page_num = char.get('page', 0)
+                            if page_num >= 0 and self.viewer1.pdf_doc:
+                                if page_num not in page_heights1:
+                                    try:
+                                        page_heights1[page_num] = self.viewer1.pdf_doc.load_page(page_num).rect.height
+                                    except:
+                                        page_heights1[page_num] = 0
+                                page_height = page_heights1.get(page_num, 0)
+                                if page_height > 0:
+                                    percent = (char_y / page_height) * 100
+                                    percent = max(0, min(100, percent))
+                                    pos_info = f"(위에서 {percent:.0f}% 지점)"
+                    # PDF 1의 페이지 번호는 char_data에서 직접 가져오기
+                    page_num = 0
+                    if self.viewer1.char_data and i1 < len(self.viewer1.char_data):
+                        page_num = self.viewer1.char_data[i1].get('page', 0) + 1  # 1-indexed
+                    elif left_anchor:
+                        page_num = left_anchor[0] + 1
+                    
+                    self.diff_list.append({
+                        'type': 'delete' if tag == 'delete' else 'replace',
+                        'pdf': 'PDF 1',
+                        'page': page_num,
+                        'position': pos_info,
+                        'text': diff_text[:100]
+                    })
                 if tag in ('insert', 'replace'):
                     self._append_compared_area(self.viewer2, j1, j2)
+                    diff_text = ''
+                    if j1 < len(self.last_s2_norm):
+                        diff_text = self.last_s2_norm[j1:j2] if j2 <= len(self.last_s2_norm) else self.last_s2_norm[j1:]
+                    pos_info = ''
+                    if self.viewer2.char_data and j1 < len(self.viewer2.char_data):
+                        char = self.viewer2.char_data[j1]
+                        if 'bbox' in char:
+                            char_y = char.get('y', 0)
+                            page_num = char.get('page', 0)
+                            if page_num >= 0 and self.viewer2.pdf_doc:
+                                if page_num not in page_heights2:
+                                    try:
+                                        page_heights2[page_num] = self.viewer2.pdf_doc.load_page(page_num).rect.height
+                                    except:
+                                        page_heights2[page_num] = 0
+                                page_height = page_heights2.get(page_num, 0)
+                                if page_height > 0:
+                                    percent = (char_y / page_height) * 100
+                                    percent = max(0, min(100, percent))
+                                    pos_info = f"(위에서 {percent:.0f}% 지점)"
+                    # PDF 2의 페이지 번호는 char_data에서 직접 가져오기
+                    page_num = 0
+                    if self.viewer2.char_data and j1 < len(self.viewer2.char_data):
+                        page_num = self.viewer2.char_data[j1].get('page', 0) + 1  # 1-indexed
+                    elif right_anchor:
+                        page_num = right_anchor[0] + 1
+                    
+                    self.diff_list.append({
+                        'type': 'insert' if tag == 'insert' else 'replace',
+                        'pdf': 'PDF 2',
+                        'page': page_num,
+                        'position': pos_info,
+                        'text': diff_text[:100]
+                    })
             
             # 뷰어 갱신 (최적화: visible 페이지만 우선)
             self._refresh_viewers_optimized()
@@ -1106,8 +1203,8 @@ class HFCompareWidget(QWidget):
         if hasattr(self, 'viewer2') and self.viewer2:
             self.viewer2.reload_pages()
         
-        total = len(self.viewer1.diff_pages) + len(self.viewer2.diff_pages)
-        QMessageBox.information(self, 'Comparison Complete', f'Found {total} difference locations.')
+        total = len(self.diff_list)
+        QMessageBox.information(self, 'Comparison Complete', f'Found {total} differences.')
         # 완료 메시지 후 오버레이 숨김
         self.show_loading(False)
     
@@ -1276,3 +1373,124 @@ class HFCompareWidget(QWidget):
         layout.addWidget(close_btn)
 
         dialog.exec()
+
+    def show_diff_list_dialog(self):
+        """비교 결과 목록을 팝업으로 표시"""
+        if not self.diff_list:
+            QMessageBox.information(self, '결과 목록', '비교 결과가 없습니다. 먼저 비교를 실행해주세요.')
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('📋 비교 결과 목록')
+        dialog.setFixedSize(700, 500)
+        dialog.setStyleSheet(MODERN_QSS)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 결과 요약
+        total = len(self.diff_list)
+        delete_count = sum(1 for d in self.diff_list if d['type'] == 'delete')
+        insert_count = sum(1 for d in self.diff_list if d['type'] == 'insert')
+        replace_count = sum(1 for d in self.diff_list if d['type'] == 'replace')
+
+        summary = QLabel(
+            f"<div style='font-size:14px; margin-bottom:15px;'>"
+            f"<b>총 {total}개 차이점</b> | "
+            f"<span style='color:#FF9500;'>삭제: {delete_count}</span> | "
+            f"<span style='color:#34C759;'>추가: {insert_count}</span> | "
+            f"<span style='color:#007AFF;'>변경: {replace_count}</span>"
+            f"</div>"
+        )
+        layout.addWidget(summary)
+
+        # 결과 리스트 위젯
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        list_widget = QListWidget()
+        list_widget.setSpacing(5)
+
+        for i, diff in enumerate(self.diff_list):
+            type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
+            type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
+            pos = diff.get('position', '')
+
+            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}"
+            item = QListWidgetItem(item_text)
+            item.setData(1, diff)  # diff 데이터 저장
+            list_widget.addItem(item)
+
+        def on_item_clicked(item):
+            diff = item.data(1)
+            if not diff:
+                return
+            page_num = diff.get('page', 1) - 1  # 0-indexed
+            viewer = self.viewer1 if diff.get('pdf') == 'PDF 1' else self.viewer2
+            if viewer and viewer.page_labels and page_num < len(viewer.page_labels):
+                lbl = viewer.page_labels[page_num]
+
+                pos_str = diff.get('position', '')
+                import re
+                percent = None
+                match = re.search(r'(\d+)%', pos_str)
+                if match:
+                    percent = int(match.group(1)) / 100
+
+                def scroll_to_target():
+                    page_top = lbl.y()
+                    page_height_px = lbl.height() if lbl.height() > 0 else 1
+                    target_y = page_top
+                    if percent is not None:
+                        target_y = page_top + page_height_px * percent
+                    # 뷰어 중앙에 위치하도록 보정
+                    target_scroll = int(target_y - viewer.viewport().height() / 2)
+                    target_scroll = max(0, min(target_scroll, viewer.verticalScrollBar().maximum()))
+                    viewer.verticalScrollBar().setValue(target_scroll)
+
+                # 페이지 전체가 로드되었는지 확인 후 스크롤
+                QTimer.singleShot(0, scroll_to_target)
+
+        list_widget.itemClicked.connect(on_item_clicked)
+
+        layout.addWidget(list_widget)
+
+        # 버튼 행
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        # 전체 복사 버튼
+        copy_btn = QPushButton('📋 전체 복사')
+        copy_btn.setObjectName('secondaryBtn')
+        copy_btn.setFixedHeight(38)
+        copy_btn.setMinimumWidth(100)
+        copy_btn.clicked.connect(lambda: self._copy_diff_list_to_clipboard(list_widget))
+        btn_layout.addWidget(copy_btn)
+
+        btn_layout.addStretch()
+
+        # 닫기 버튼
+        close_btn = QPushButton('닫기')
+        close_btn.setObjectName('actionBtn')
+        close_btn.setFixedHeight(38)
+        close_btn.setMinimumWidth(80)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+        self.diff_list_dialog = dialog
+        dialog.show()
+
+    def _copy_diff_list_to_clipboard(self, list_widget):
+        """결과 목록을 클립보드에 복사"""
+        if not self.diff_list:
+            return
+        lines = []
+        for diff in self.diff_list:
+            type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
+            type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
+            pos = diff.get('position', '')
+            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}")
+        text = '\n'.join(lines)
+        QApplication.clipboard().setText(text)
+        QMessageBox.information(self, '복사 완료', '결과 목록이 클립보드에 복사되었습니다.')
