@@ -144,6 +144,7 @@ class PDFViewer(QScrollArea):
         super().__init__(parent)
         self.setObjectName('pdfViewerArea')
         self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
         # Enable drag and drop
         self.setAcceptDrops(True)
@@ -263,6 +264,7 @@ class PDFViewer(QScrollArea):
         self.word_highlights = {}
         self.last_compared_area = {}
         self.pending_selection_rect = None
+        self.selection_areas = {}
         
         # Add drop zone indicator when empty
         self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 아래 버튼을 클릭하여 파일을 선택하세요')
@@ -455,10 +457,34 @@ class PDFViewer(QScrollArea):
         y0 = rect.y() / self.scale
         x1 = (rect.x() + rect.width()) / self.scale
         y1 = (rect.y() + rect.height()) / self.scale
-        self.pending_selection_rect = (page_num, fitz.Rect(x0, y0, x1, y1))
+        fitz_rect = fitz.Rect(x0, y0, x1, y1)
+        chars, raw_text = self.extract_and_process_text(page_num, rect)
+        self.selection_areas.setdefault(page_num, []).append((fitz_rect, chars, raw_text))
+        self.pending_selection_rect = (page_num, fitz_rect)
+        self.rebuild_selection_data()
+        self.last_compared_area = {
+            page: [area for area, _, _ in selections]
+            for page, selections in self.selection_areas.items()
+        }
+        self.page_labels[page_num].clear_selection()
+        self.refresh_highlights()
+
+    def rebuild_selection_data(self):
         self.char_data = []
-        self.raw_text = ''
-        self.extract_and_process_text(page_num, rect)
+        raw_texts = []
+        word_offset = 0
+        for page_num in sorted(self.selection_areas):
+            for _, chars, text in self.selection_areas[page_num]:
+                self.char_data.extend({**char, 'word_id': char['word_id'] + word_offset} for char in chars)
+                word_offset += max((char['word_id'] for char in chars), default=0)
+                if text:
+                    raw_texts.append(text)
+        self.raw_text = '\n'.join(raw_texts)
+        if self.pending_selection_rect and self.pending_selection_rect[0] not in self.selection_areas:
+            self.pending_selection_rect = None
+        if not self.pending_selection_rect and self.selection_areas:
+            page_num = max(self.selection_areas)
+            self.pending_selection_rect = (page_num, self.selection_areas[page_num][-1][0])
 
     def extract_and_process_text(self, page_num, rect):
         x0 = rect.x() / self.scale
@@ -477,7 +503,7 @@ class PDFViewer(QScrollArea):
                         c_norm = unicodedata.normalize('NFC', c)
                         all_raw_chars.append({'char': c_norm, 'bbox': char['bbox'], 'y': char['bbox'][1], 'x': char['bbox'][0]})
         if not all_raw_chars:
-            return
+            return [], ''
         all_raw_chars.sort(key=lambda x: x['y'])
         grouped = []
         curr = [all_raw_chars[0]]
@@ -505,8 +531,7 @@ class PDFViewer(QScrollArea):
                 if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
                     final_norm.append({'char': clean_char, 'bbox': c['bbox'], 'x': c['x'], 'y': c['y'], 'page': page_num, 'word_id': word_counter})
             raw_lines.append(''.join(line_str_raw))
-        self.char_data = final_norm
-        self.raw_text = '\n'.join(raw_lines)
+        return final_norm, '\n'.join(raw_lines)
 
     def _on_page_return_pressed(self):
         self._on_goto_page()
@@ -624,6 +649,8 @@ class PDFViewer(QScrollArea):
     def clear_all_data(self):
         self.word_highlights.clear()
         self.last_compared_area.clear()
+        self.selection_areas.clear()
+        self.pending_selection_rect = None
         self.char_data = []
         self.raw_text = ''
         self.search_helper.clear_all_search_data()
@@ -861,6 +888,9 @@ class PdfCompareWidget(QWidget):
         if step_index >= len(viewers):
             self.last_s1_norm = ''
             self.last_s2_norm = ''
+            self.last_s1_raw = ''
+            self.last_s2_raw = ''
+            self.diff_list.clear()
             self.show_loading(False)
             return
 
@@ -868,6 +898,10 @@ class PdfCompareWidget(QWidget):
             viewer = viewers[step_index]
             viewer.word_highlights.clear()
             viewer.last_compared_area.clear()
+            viewer.selection_areas.clear()
+            viewer.pending_selection_rect = None
+            viewer.char_data = []
+            viewer.raw_text = ''
             viewer.diff_pages = []
             viewer.diff_index = -1
             viewer.reload_pages()
@@ -903,10 +937,9 @@ class PdfCompareWidget(QWidget):
             if current_page < len(viewer.page_labels):
                 viewer.page_labels[current_page].clear_selection()
 
-            if viewer.pending_selection_rect and viewer.pending_selection_rect[0] == current_page:
-                viewer.pending_selection_rect = None
-                viewer.char_data.clear()
-                viewer.raw_text = ''
+            if current_page in viewer.selection_areas:
+                del viewer.selection_areas[current_page]
+                viewer.rebuild_selection_data()
 
         try:
             if step_index == 0:
@@ -966,10 +999,11 @@ class PdfCompareWidget(QWidget):
         
         # 데이터 준비
         for viewer in [self.viewer1, self.viewer2]:
-            viewer.last_compared_area.clear()
-            if viewer.pending_selection_rect:
-                page_num, rect = viewer.pending_selection_rect
-                viewer.last_compared_area[page_num] = [rect]
+            viewer.word_highlights.clear()
+            viewer.last_compared_area = {
+                page: [rect for rect, _, _ in selections]
+                for page, selections in viewer.selection_areas.items()
+            }
         
         # 로딩 오버레이 표시
         self.show_loading(True, "비교중")
@@ -1073,6 +1107,8 @@ class PdfCompareWidget(QWidget):
                         char = self.viewer1.char_data[i1]
                         if 'bbox' in char:
                             char_y = char.get('y', 0)
+                            if self.viewer1.pdf_doc:
+                                page_height1 = self.viewer1.pdf_doc.load_page(char.get('page', 0)).rect.height
                             if page_height1 > 0:
                                 # 페이지 전체 기준 백분율
                                 percent = (char_y / page_height1) * 100
@@ -1104,6 +1140,8 @@ class PdfCompareWidget(QWidget):
                         char = self.viewer2.char_data[j1]
                         if 'bbox' in char:
                             char_y = char.get('y', 0)
+                            if self.viewer2.pdf_doc:
+                                page_height2 = self.viewer2.pdf_doc.load_page(char.get('page', 0)).rect.height
                             if page_height2 > 0:
                                 # 페이지 전체 기준 백분율
                                 percent = (char_y / page_height2) * 100

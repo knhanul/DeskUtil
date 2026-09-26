@@ -24,7 +24,7 @@ TARGETS = {
 }
 
 
-def build(target_name: str, version: str = None, release_date: str = None):
+def build(target_name: str, version: str = None, release_date: str = None, onefile: bool = False):
     project_root = Path(__file__).resolve().parent
     target = TARGETS[target_name]
     env = os.environ.copy()
@@ -67,8 +67,17 @@ def build(target_name: str, version: str = None, release_date: str = None):
         'app.tools.dual_pane_manager',
         '--hidden-import',
         'app.tools.document_search_ui',
+        '--hidden-import',
+        'app.tools.pdf_generator_ui',
+        '--hidden-import',
+        'pythoncom',
+        '--hidden-import',
+        'win32com.client',
         str(project_root / 'main.py'),
     ]
+    # 원파일 모드 (--onefile) 또는 디렉터리 모드 (기본)
+    if onefile:
+        command[10:10] = ['--onefile']
     icon_path = project_root / target['icon']
     if icon_path.exists():
         command[10:10] = ['--icon', str(icon_path)]
@@ -99,5 +108,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', default='1.2.0', help='버전 (기본값: 1.2.0)')
     parser.add_argument('--release-date', default=datetime.now().strftime('%Y-%m-%d'), 
                        help='생성일자 (기본값: 오늘 날짜)')
+    parser.add_argument('--onefile', action='store_true',
+                       help='단일 실행 파일로 빌드 (기본: 디렉터리 모드)')
     args = parser.parse_args()
-    build(args.target, args.version, args.release_date)
+    build(args.target, args.version, args.release_date, args.onefile)

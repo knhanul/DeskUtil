@@ -1,6 +1,6 @@
 TARGET = {
     'BUILD_TARGET': 'posid',
-    'APP_NAME': 'Posid 데스크',
+    'APP_NAME': 'Posid PDF비교',
     'COMPANY_NAME': '우체국금융개발원',
     'THEME_COLOR_PRIMARY': '#004b93',
     'ASSET_DIR': 'assets/posid',

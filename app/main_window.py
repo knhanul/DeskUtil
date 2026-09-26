@@ -81,6 +81,8 @@ class MdiMainWindow(QMainWindow):
         self.sidebar_brand_subtitle = QLabel(COMPANY_NAME)
         self.sidebar_brand_subtitle.setObjectName('sidebarBrandSubtitle')
         self.sidebar_brand_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 회사명 문구는 헤더/정보 팝업에서만 표시하고 사이드바 로고 하단에는 미표시
+        self.sidebar_brand_subtitle.setVisible(False)
         logo_layout.addWidget(self.sidebar_logo)
         logo_layout.addWidget(self.sidebar_brand_title)
         logo_layout.addWidget(self.sidebar_brand_subtitle)
@@ -184,7 +186,7 @@ class MdiMainWindow(QMainWindow):
         else:
             # Show full logo card
             self.sidebar_brand_title.setVisible(True)
-            self.sidebar_brand_subtitle.setVisible(True)
+            self.sidebar_brand_subtitle.setVisible(False)
             logo_path = get_logo_path()
             if logo_path:
                 self.sidebar_logo.setPixmap(QPixmap(logo_path).scaled(144, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -254,7 +256,7 @@ class MdiMainWindow(QMainWindow):
         tool_definitions = [
             {
                 'key': 'pdf_compare',
-                'menu_title': '📄 PDF 지정 영역 비교',
+                'menu_title': '영역지정비교',
                 'window_title': 'PDF 지정 영역 비교',
                 'module_path': 'app.tools.pdf_compare',
                 'class_name': 'PdfCompareWidget',
@@ -264,7 +266,7 @@ class MdiMainWindow(QMainWindow):
             },
             {
                 'key': 'pdf_hf_compare',
-                'menu_title': '📄 PDF 전체 비교',
+                'menu_title': '전체비교',
                 'window_title': 'PDF 전체 비교',
                 'module_path': 'app.tools.pdf_header_footer_compare',
                 'class_name': 'HFCompareWidget',
@@ -273,8 +275,18 @@ class MdiMainWindow(QMainWindow):
                 'icon': '📄',
             },
             {
+                'key': 'pdf_generator',
+                'menu_title': 'PDF 생성',
+                'window_title': 'PDF 생성',
+                'module_path': 'app.tools.pdf_generator_ui',
+                'class_name': 'PdfGeneratorWidget',
+                'singleton': True,
+                'enabled': True,
+                'icon': '📄',
+            },
+            {
                 'key': 'dual_pane_manager',
-                'menu_title': '🗂️ 파일 관리자',
+                'menu_title': '탐색기',
                 'window_title': '파일 관리자',
                 'module_path': 'app.tools.dual_pane_manager',
                 'class_name': 'DualPaneManager',
@@ -284,7 +296,7 @@ class MdiMainWindow(QMainWindow):
             },
             {
                 'key': 'document_search',
-                'menu_title': '🔍 문서 찾기',
+                'menu_title': '문서찾기',
                 'window_title': '문서 찾기',
                 'module_path': 'app.tools.document_search_ui',
                 'class_name': 'DocumentSearchWidget',
@@ -346,6 +358,10 @@ class MdiMainWindow(QMainWindow):
         if not self.current_tool_widget:
             return
 
+        if self.current_tool_key == 'pdf_generator' and self.current_tool_widget.is_running():
+            QMessageBox.information(self, 'PDF 생성', '진행 중인 변환이 끝난 뒤 화면을 닫을 수 있습니다.')
+            return
+
         # close()를 호출하여 closeEvent가 실행되도록 함 (스레드 정리)
         self.current_tool_widget.close()
         self.current_tool_widget.hide()
@@ -402,8 +418,17 @@ class MdiMainWindow(QMainWindow):
             image.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(image)
 
+        # 빌드 시 설정된 버전/제작일자 표시
+        version_info = QLabel(
+            f"<div style='text-align:center; color:#666; font-size:11px; margin:4px 0;'>"
+            f"버전 v{VERSION} &nbsp;|&nbsp; 제작일자 {RELEASE_DATE}"
+            f"</div>"
+        )
+        version_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_info)
+
         # Add new title text (two lines, second line bold)
-        text = QLabel("<div style='text-align:center;'><p style='color:#333; font-size:12px; margin:5px 0;'>우체국금융개발원 디지털정보전략실</p><p style='color:#555; font-size:12px; font-weight:600; margin:5px 0;'>sLlm연구모임</p></div>")
+        text = QLabel("<div style='text-align:center;'><p style='color:#333; font-size:12px; margin:5px 0;'>우체국금융개발원</p><p style='color:#555; font-size:12px; font-weight:600; margin:5px 0;'>나주 AI킥오프모임</p></div>")
         text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(text)
 
@@ -419,6 +444,11 @@ class MdiMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """애플리케이션 종료 시 모든 스레드 정리 (좀비 프로세스 방지)"""
+        generator = self.tool_cache.get('pdf_generator')
+        if generator and generator.is_running():
+            QMessageBox.information(self, 'PDF 생성', '진행 중인 변환이 끝난 뒤 종료할 수 있습니다. 작업 취소를 누르면 현재 파일 처리 후 중단됩니다.')
+            event.ignore()
+            return
         # 현재 활성화된 도구의 스레드 정리
         if self.current_tool_widget:
             self.current_tool_widget.close()

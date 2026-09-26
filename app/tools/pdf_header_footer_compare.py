@@ -155,6 +155,7 @@ class HFViewer(QScrollArea):
         super().__init__(parent)
         self.setObjectName('pdfViewerArea')
         self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setAcceptDrops(True)
 
         self.scale = 1.5
@@ -666,31 +667,28 @@ class HFViewer(QScrollArea):
 
     def get_scroll_anchor(self):
         """Convert current scroll position to (page, y) anchor"""
-        if not self.page_labels:
-            return None
-        scroll_y = self.verticalScrollBar().value()
-        current_y = 0
-        for page_num, lbl in enumerate(self.page_labels):
-            page_height = lbl.height() + self.vbox.spacing()
-            if current_y + page_height > scroll_y:
-                relative_y = max(0.0, (scroll_y - current_y) / max(self.scale, 0.0001))
-                return (page_num, relative_y)
-            current_y += page_height
-        last_page = len(self.page_labels) - 1
-        if last_page >= 0:
-            return (last_page, 0.0)
+        center = self.verticalScrollBar().value() + self.viewport().height() / 2
+        return self.anchor_from_content_y(center)
+
+    def anchor_from_content_y(self, position):
+        for page_num, label in enumerate(self.page_labels):
+            if position < label.y() + label.height() + self.vbox.spacing() / 2 or page_num == len(self.page_labels) - 1:
+                y = max(0.0, min((position - label.y()) / max(self.scale, 0.0001),
+                                 label.height() / max(self.scale, 0.0001)))
+                return page_num, y
         return None
+
+    def anchor_to_content_y(self, anchor):
+        if not anchor or not 0 <= anchor[0] < len(self.page_labels):
+            return None
+        label = self.page_labels[anchor[0]]
+        return label.y() + max(0.0, min(anchor[1] * self.scale, label.height()))
 
     def scroll_to_anchor(self, anchor):
         """Immediately scroll to (page, y) anchor position"""
-        if not anchor:
-            return
-        page_num, y_pos = anchor
-        target_y = 0
-        for i in range(min(page_num, len(self.page_labels))):
-            target_y += self.page_labels[i].height() + self.vbox.spacing()
-        target_y += int(y_pos * self.scale) - 80
-        self.verticalScrollBar().setValue(max(0, target_y))
+        position = self.anchor_to_content_y(anchor)
+        if position is not None:
+            self.verticalScrollBar().setValue(round(position - self.viewport().height() / 2))
 
 
 # ──────────────────────────────────────────────────────────
@@ -861,6 +859,13 @@ class HFCompareWidget(QWidget):
 
         bl.addStretch()
 
+        self.btn_reset_page = QPushButton('↩  페이지 초기화')
+        self.btn_reset_page.setObjectName('resetBtn')
+        self.btn_reset_page.setFixedHeight(40)
+        self.btn_reset_page.setMinimumWidth(130)
+        self.btn_reset_page.clicked.connect(self.request_reset_page)
+        bl.addWidget(self.btn_reset_page)
+
         self.btn_reset = QPushButton('🗑  초기화')
         self.btn_reset.setObjectName('resetBtn')
         self.btn_reset.setFixedHeight(40)
@@ -878,58 +883,96 @@ class HFCompareWidget(QWidget):
         """viewer1 스크롤 시 viewer2 동기화"""
         if not self._syncing and self.sync_scroll_enabled:
             self._syncing = True
-            source_anchor = self.viewer1.get_scroll_anchor()
-            target_anchor = self._find_partner_anchor(source_anchor, source_index=0)
-            if target_anchor:
-                self.viewer2.scroll_to_anchor(target_anchor)
-            elif source_anchor:
-                # 페이지 수준 폴백: 같은 페이지로 이동
-                src_page = source_anchor[0]
-                if self.viewer2.page_labels and 0 <= src_page < len(self.viewer2.page_labels):
-                    self.viewer2.page_spin.setText(str(src_page + 1))
-                    self.viewer2._on_page_return_pressed()
-            self._syncing = False
+            try:
+                source_anchor = self.viewer1.get_scroll_anchor()
+                target_anchor = self._find_partner_anchor(source_anchor, source_index=0)
+                if target_anchor:
+                    self.viewer2.scroll_to_anchor(target_anchor)
+                elif source_anchor:
+                    # 페이지 수준 폴백: 같은 페이지로 이동
+                    src_page = source_anchor[0]
+                    if self.viewer2.page_labels and 0 <= src_page < len(self.viewer2.page_labels):
+                        self.viewer2.page_spin.setText(str(src_page + 1))
+                        self.viewer2._on_page_return_pressed()
+            finally:
+                self._syncing = False
 
     def _sync2(self, v):
         """viewer2 스크롤 시 viewer1 동기화"""
         if not self._syncing and self.sync_scroll_enabled:
             self._syncing = True
-            source_anchor = self.viewer2.get_scroll_anchor()
-            target_anchor = self._find_partner_anchor(source_anchor, source_index=1)
-            if target_anchor:
-                self.viewer1.scroll_to_anchor(target_anchor)
-            elif source_anchor:
-                # 페이지 수준 폴백: 같은 페이지로 이동
-                src_page = source_anchor[0]
-                if self.viewer1.page_labels and 0 <= src_page < len(self.viewer1.page_labels):
-                    self.viewer1.page_spin.setText(str(src_page + 1))
-                    self.viewer1._on_page_return_pressed()
-            self._syncing = False
+            try:
+                source_anchor = self.viewer2.get_scroll_anchor()
+                target_anchor = self._find_partner_anchor(source_anchor, source_index=1)
+                if target_anchor:
+                    self.viewer1.scroll_to_anchor(target_anchor)
+                elif source_anchor:
+                    # 페이지 수준 폴백: 같은 페이지로 이동
+                    src_page = source_anchor[0]
+                    if self.viewer1.page_labels and 0 <= src_page < len(self.viewer1.page_labels):
+                        self.viewer1.page_spin.setText(str(src_page + 1))
+                        self.viewer1._on_page_return_pressed()
+            finally:
+                self._syncing = False
 
     def toggle_sync_scroll(self, checked):
         """동시 스크롤 토글"""
         self.sync_scroll_enabled = checked
+        if checked and self.viewer1.page_labels and self.viewer2.page_labels:
+            self._sync1(self.viewer1.verticalScrollBar().value())
 
     def _find_partner_anchor(self, source_anchor, source_index):
-        """현재 뷰어 앵커와 가장 가까운 비교 쌍을 찾아 반대편 앵커 반환"""
-        if not source_anchor or not self.sync_anchor_pairs:
+        """일치 구간의 위치를 보간하여 반대편 뷰어의 앵커 반환"""
+        source, target = ((self.viewer1, self.viewer2) if source_index == 0
+                          else (self.viewer2, self.viewer1))
+        source_y = source.anchor_to_content_y(source_anchor)
+        if source_y is None or not target.page_labels:
             return None
-        src_page, src_y = source_anchor
-        best_distance = None
-        best_target = None
+        positions = {}
         for left_anchor, right_anchor in self.sync_anchor_pairs:
-            candidate = left_anchor if source_index == 0 else right_anchor
-            target = right_anchor if source_index == 0 else left_anchor
-            if candidate is None or target is None:
+            candidate, partner = ((left_anchor, right_anchor) if source_index == 0
+                                  else (right_anchor, left_anchor))
+            x = source.anchor_to_content_y(candidate)
+            y = target.anchor_to_content_y(partner)
+            if x is not None and y is not None:
+                positions.setdefault(x, []).append(y)
+        if not positions:
+            progress = source.verticalScrollBar().value() / max(1, source.verticalScrollBar().maximum())
+            target_y = progress * target.verticalScrollBar().maximum() + target.viewport().height() / 2
+            return target.anchor_from_content_y(target_y)
+        points = []
+        for x, values in sorted(positions.items()):
+            points.append((x, max(points[-1][1] if points else 0, sum(values) / len(values))))
+        if len(points) == 1:
+            ratio = target.scale / max(source.scale, 0.0001)
+            target_y = points[0][1] + (source_y - points[0][0]) * ratio
+        else:
+            right = next((i for i in range(1, len(points)) if points[i][0] >= source_y), len(points) - 1)
+            left = right - 1
+            x0, y0 = points[left]
+            x1, y1 = points[right]
+            target_y = y0 + (source_y - x0) * (y1 - y0) / (x1 - x0)
+        return target.anchor_from_content_y(target_y)
+
+    def _build_sync_anchor_pairs(self, opcodes):
+        pairs = []
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag != 'equal' or i1 == i2:
                 continue
-            cand_page, cand_y = candidate
-            page_distance = abs(cand_page - src_page) * 100000
-            y_distance = abs(cand_y - src_y)
-            distance = page_distance + y_distance
-            if best_distance is None or distance < best_distance:
-                best_distance = distance
-                best_target = target
-        return best_target
+            length = i2 - i1
+            indices = {0, length - 1, *range(0, length, max(1, length // 200))}
+            for offset in range(1, length):
+                previous_left = self.viewer1.char_data[i1 + offset - 1]['page']
+                previous_right = self.viewer2.char_data[j1 + offset - 1]['page']
+                if (self.viewer1.char_data[i1 + offset]['page'] != previous_left
+                        or self.viewer2.char_data[j1 + offset]['page'] != previous_right):
+                    indices.add(offset)
+            for offset in sorted(indices):
+                left = self.viewer1.char_data[i1 + offset]
+                right = self.viewer2.char_data[j1 + offset]
+                pairs.append(((left['page'], (left['bbox'][1] + left['bbox'][3]) / 2),
+                              (right['page'], (right['bbox'][1] + right['bbox'][3]) / 2)))
+        return pairs
 
     def _build_anchor_from_range(self, viewer, start_idx, end_idx):
         """char_data 범위로부터 (page, y) 앵커 생성"""
@@ -1059,6 +1102,7 @@ class HFCompareWidget(QWidget):
             
             # Anchor pairs 복원 (동기화용) 및 diff_list 채우기
             opcodes = result.get('opcodes', [])
+            self.sync_anchor_pairs = self._build_sync_anchor_pairs(opcodes)
             self.diff_list = []
 
             # 페이지 높이 캐시
@@ -1070,8 +1114,6 @@ class HFCompareWidget(QWidget):
                     continue
                 left_anchor = self._build_anchor_from_range(self.viewer1, i1, i2)
                 right_anchor = self._build_anchor_from_range(self.viewer2, j1, j2)
-                if left_anchor or right_anchor:
-                    self.sync_anchor_pairs.append((left_anchor, right_anchor))
                 if tag in ('delete', 'replace'):
                     self._append_compared_area(self.viewer1, i1, i2)
                     diff_text = ''
@@ -1288,6 +1330,42 @@ class HFCompareWidget(QWidget):
             viewer.word_highlights[page_num].append((info['bbox'], color))
 
     # Reset methods
+    def get_current_page(self, viewer):
+        if not viewer.pdf_doc or not viewer.page_labels:
+            return None
+        scroll_top = viewer.verticalScrollBar().value()
+        scroll_bottom = scroll_top + viewer.viewport().height()
+        return max(range(len(viewer.page_labels)), key=lambda page: max(
+            0, min(scroll_bottom, viewer.page_labels[page].y() + viewer.page_labels[page].height())
+            - max(scroll_top, viewer.page_labels[page].y())
+        ))
+
+    def request_reset_page(self):
+        if self.compare_manager:
+            return
+        self.reset_current_page()
+
+    def reset_current_page(self):
+        page1 = self.get_current_page(self.viewer1)
+        page2 = self.get_current_page(self.viewer2)
+        for viewer, page in ((self.viewer1, page1), (self.viewer2, page2)):
+            if page is None:
+                continue
+            viewer.word_highlights.pop(page, None)
+            viewer.last_compared_area.pop(page, None)
+            viewer.diff_pages = [item for item in getattr(viewer, 'diff_pages', []) if item[0] != page]
+            viewer.diff_index = -1
+            viewer.refresh_highlights()
+        self.diff_list = [item for item in self.diff_list if not (
+            (item['pdf'] == 'PDF 1' and page1 is not None and item['page'] == page1 + 1)
+            or (item['pdf'] == 'PDF 2' and page2 is not None and item['page'] == page2 + 1)
+        )]
+        self.sync_anchor_pairs = [
+            (left, right) for left, right in self.sync_anchor_pairs
+            if not ((left and page1 is not None and left[0] == page1)
+                    or (right and page2 is not None and right[0] == page2))
+        ]
+
     def request_reset(self):
         """초기화 요청 - show_loading 사용"""
         self.show_loading(True, "하이라이트 초기화 중...")

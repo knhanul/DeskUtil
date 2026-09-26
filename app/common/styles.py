@@ -272,6 +272,23 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: none;
 }}
 
+QScrollArea#pdfViewerArea QScrollBar:vertical {{
+    background: rgba(255, 255, 255, 0.08);
+    width: 8px;
+    margin: 4px 1px;
+    border-radius: 4px;
+}}
+
+QScrollArea#pdfViewerArea QScrollBar::handle:vertical {{
+    background-color: rgba(255, 255, 255, 0.65);
+    min-height: 30px;
+    border-radius: 3px;
+}}
+
+QScrollArea#pdfViewerArea QScrollBar::handle:vertical:hover {{
+    background-color: rgba(255, 255, 255, 0.9);
+}}
+
 QScrollBar:horizontal {{
     border: none;
     background: transparent;
