@@ -1,6 +1,7 @@
 """SQLite FTS5 데이터베이스 관리 - 완전 재설계"""
 import sqlite3
 import os
+from contextlib import closing
 from pathlib import Path
 from typing import List, Tuple, Optional
 from datetime import datetime
@@ -49,6 +50,35 @@ class FTS5Database:
             )
         ''')
         
+        columns = {row[1] for row in cursor.execute('PRAGMA table_info(documents)')}
+        for name, sql_type in (('created_at', 'REAL'), ('mtime_ns', 'INTEGER'),
+                               ('status', "TEXT NOT NULL DEFAULT 'indexed'"), ('error_message', 'TEXT')):
+            if name not in columns:
+                cursor.execute(f'ALTER TABLE documents ADD COLUMN {name} {sql_type}')
+        has_indexed_fts = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='indexed_fts'"
+        ).fetchone()
+        cursor.execute('''
+            CREATE VIRTUAL TABLE IF NOT EXISTS indexed_fts USING fts5(
+                file_name, doc_text, tokenize='unicode61'
+            )
+        ''')
+        cursor.execute('CREATE TABLE IF NOT EXISTS indexed_folders (path TEXT PRIMARY KEY)')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS index_runs (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                updated_at TEXT, unsupported INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+        if not has_indexed_fts:
+            cursor.execute('''
+                INSERT OR IGNORE INTO indexed_fts(rowid, file_name, doc_text)
+                SELECT d.doc_id, d.file_name, f.doc_text
+                FROM documents d
+                JOIN doc_fts_map m ON m.doc_id = d.doc_id
+                JOIN fts_index f ON f.rowid = m.fts_rowid
+                WHERE d.status = 'indexed'
+            ''')
         conn.commit()
         conn.close()
         print("[DB] 테이블 초기화 완료")
@@ -108,6 +138,9 @@ class FTS5Database:
             # 매핑 저장
             cursor.execute('INSERT OR REPLACE INTO doc_fts_map (doc_id, fts_rowid) VALUES (?, ?)',
                           (doc_id, fts_rowid))
+            cursor.execute('DELETE FROM indexed_fts WHERE rowid = ?', (doc_id,))
+            cursor.execute('INSERT INTO indexed_fts(rowid, file_name, doc_text) VALUES (?, ?, ?)',
+                           (doc_id, path.name, content))
             
             conn.commit()
             print(f"[DB] 완료: doc_id={doc_id}, fts_rowid={fts_rowid}, content_len={len(content)}")
@@ -263,6 +296,7 @@ class FTS5Database:
                     cursor.execute('DELETE FROM fts_index WHERE rowid = ?', (fts_rowid,))
                     cursor.execute('DELETE FROM doc_fts_map WHERE doc_id = ?', (doc_id,))
                 
+                cursor.execute('DELETE FROM indexed_fts WHERE rowid = ?', (doc_id,))
                 cursor.execute('DELETE FROM documents WHERE doc_id = ?', (doc_id,))
                 conn.commit()
             
@@ -305,3 +339,176 @@ class FTS5Database:
             conn.close()
         except Exception as e:
             print(f"VACUUM 오류: {e}")
+
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @staticmethod
+    def _under(path, folder):
+        path = os.path.normcase(os.path.normpath(path))
+        folder = os.path.normcase(os.path.normpath(folder))
+        return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+    def list_folders(self):
+        with closing(self._connect()) as conn, conn:
+            return [row['path'] for row in conn.execute('SELECT path FROM indexed_folders ORDER BY path')]
+
+    def add_folder(self, folder):
+        folder = os.path.normpath(os.path.abspath(folder))
+        if not os.path.isdir(folder):
+            raise ValueError('폴더를 찾을 수 없습니다.')
+        current = self.list_folders()
+        if any(self._under(folder, registered) for registered in current):
+            return False
+        with closing(self._connect()) as conn, conn:
+            for registered in current:
+                if self._under(registered, folder):
+                    conn.execute('DELETE FROM indexed_folders WHERE path = ?', (registered,))
+            conn.execute('INSERT INTO indexed_folders(path) VALUES (?)', (folder,))
+        return True
+
+    def _remove_rows(self, conn, paths):
+        for path in paths:
+            row = conn.execute('SELECT doc_id FROM documents WHERE file_path = ?', (path,)).fetchone()
+            if not row:
+                continue
+            doc_id = row['doc_id']
+            conn.execute('DELETE FROM indexed_fts WHERE rowid = ?', (doc_id,))
+            mapping = conn.execute('SELECT fts_rowid FROM doc_fts_map WHERE doc_id = ?', (doc_id,)).fetchone()
+            if mapping:
+                conn.execute('DELETE FROM fts_index WHERE rowid = ?', (mapping['fts_rowid'],))
+                conn.execute('DELETE FROM doc_fts_map WHERE doc_id = ?', (doc_id,))
+            conn.execute('DELETE FROM documents WHERE doc_id = ?', (doc_id,))
+
+    def remove_folder(self, folder, purge=True):
+        with closing(self._connect()) as conn, conn:
+            conn.execute('DELETE FROM indexed_folders WHERE path = ?', (folder,))
+            if purge:
+                paths = [row['file_path'] for row in conn.execute('SELECT file_path FROM documents')
+                         if self._under(row['file_path'], folder)]
+                self._remove_rows(conn, paths)
+
+    def document_snapshot(self, folder):
+        with closing(self._connect()) as conn, conn:
+            return {row['file_path']: dict(row) for row in conn.execute(
+                'SELECT file_path, file_size, mtime_ns, status FROM documents'
+            ) if self._under(row['file_path'], folder)}
+
+    def upsert_indexed(self, path, content, stat):
+        path = os.path.normpath(path)
+        with closing(self._connect()) as conn, conn:
+            conn.execute('''
+                INSERT INTO documents(file_path, file_name, file_ext, file_size, mtime,
+                                      mtime_ns, created_at, status, error_message, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'indexed', NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    file_name=excluded.file_name, file_ext=excluded.file_ext,
+                    file_size=excluded.file_size, mtime=excluded.mtime,
+                    mtime_ns=excluded.mtime_ns, created_at=excluded.created_at,
+                    status='indexed', error_message=NULL, indexed_at=CURRENT_TIMESTAMP
+            ''', (path, Path(path).name, Path(path).suffix.lower(), stat.st_size,
+                  datetime.fromtimestamp(stat.st_mtime).isoformat(sep=' '), stat.st_mtime_ns, stat.st_ctime))
+            doc_id = conn.execute('SELECT doc_id FROM documents WHERE file_path = ?', (path,)).fetchone()['doc_id']
+            conn.execute('DELETE FROM indexed_fts WHERE rowid = ?', (doc_id,))
+            conn.execute('INSERT INTO indexed_fts(rowid, file_name, doc_text) VALUES (?, ?, ?)',
+                         (doc_id, Path(path).name, content))
+
+    def record_failure(self, path, stat, message):
+        path = os.path.normpath(path)
+        with closing(self._connect()) as conn, conn:
+            conn.execute('''
+                INSERT INTO documents(file_path, file_name, file_ext, file_size, mtime,
+                                      mtime_ns, created_at, status, error_message, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'failed', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    file_size=excluded.file_size, mtime=excluded.mtime,
+                    mtime_ns=excluded.mtime_ns, status='failed',
+                    error_message=excluded.error_message, indexed_at=CURRENT_TIMESTAMP
+            ''', (path, Path(path).name, Path(path).suffix.lower(),
+                  stat.st_size if stat else 0,
+                  datetime.fromtimestamp(stat.st_mtime).isoformat(sep=' ') if stat else None,
+                  stat.st_mtime_ns if stat else None,
+                  stat.st_ctime if stat else None, message[:500]))
+            doc_id = conn.execute('SELECT doc_id FROM documents WHERE file_path = ?', (path,)).fetchone()['doc_id']
+            conn.execute('DELETE FROM indexed_fts WHERE rowid = ?', (doc_id,))
+
+    def remove_indexed(self, paths):
+        with closing(self._connect()) as conn, conn:
+            self._remove_rows(conn, paths)
+
+    def save_index_run(self, unsupported):
+        with closing(self._connect()) as conn, conn:
+            conn.execute('''
+                INSERT INTO index_runs(id, updated_at, unsupported) VALUES (1, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP,
+                                               unsupported=excluded.unsupported
+            ''', (unsupported,))
+
+    def index_stats(self):
+        with closing(self._connect()) as conn, conn:
+            counts = {row['status']: row['count'] for row in conn.execute(
+                'SELECT status, COUNT(*) AS count FROM documents GROUP BY status'
+            )}
+            run = conn.execute('SELECT updated_at, unsupported FROM index_runs WHERE id = 1').fetchone()
+            errors = [dict(row) for row in conn.execute('''
+                SELECT file_path, error_message FROM documents WHERE status = 'failed'
+                ORDER BY indexed_at DESC LIMIT 100
+            ''')]
+        return {
+            'total': sum(counts.values()), 'indexed': counts.get('indexed', 0),
+            'failed': counts.get('failed', 0), 'unsupported': run['unsupported'] if run else 0,
+            'updated_at': run['updated_at'] if run else None,
+            'db_size': Path(self.db_path).stat().st_size if Path(self.db_path).exists() else 0,
+            'errors': errors,
+        }
+
+    def clear_index(self):
+        with closing(self._connect()) as conn, conn:
+            conn.execute('DELETE FROM indexed_fts')
+            conn.execute('DELETE FROM doc_fts_map')
+            conn.execute('DELETE FROM fts_index')
+            conn.execute('DELETE FROM documents')
+            conn.execute('DELETE FROM index_runs')
+
+    def search_indexed(self, query, extensions, folders, search_content=True, search_filename=True,
+                       sort='relevance', limit=1000):
+        query = query.strip()
+        if not query or not folders or not (search_content or search_filename) or not extensions:
+            return []
+        phrase = '"' + query.replace('"', '""') + '"'
+        expression = phrase if search_content and search_filename else (
+            ('doc_text:' if search_content else 'file_name:') + phrase
+        )
+        escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        clauses = []
+        parameters = [expression, int(search_filename), int(search_filename), f'%{escaped}%']
+        for folder in folders:
+            prefix = folder.rstrip(os.sep) + os.sep
+            escaped_folder = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            clauses.append("(d.file_path = ? OR d.file_path LIKE ? ESCAPE '\\')")
+            parameters.extend((folder, escaped_folder + '%'))
+        placeholders = ','.join('?' for _ in extensions)
+        parameters.extend(sorted(extensions))
+        order = {
+            'modified': 'd.mtime_ns DESC', 'filename': 'd.file_name COLLATE NOCASE',
+            'filekind': 'd.file_ext, d.file_name COLLATE NOCASE',
+        }.get(sort, 'COALESCE(h.rank, 0) ASC, d.file_name COLLATE NOCASE')
+        sql = f'''
+            WITH h AS (
+                SELECT rowid, bm25(indexed_fts, 3.0, 1.0) AS rank,
+                       snippet(indexed_fts, 1, '', '', '...', 24) AS snippet
+                FROM indexed_fts WHERE indexed_fts MATCH ?
+            )
+            SELECT d.file_path, d.file_name, d.file_ext, d.file_size, d.created_at,
+                   d.mtime_ns, COALESCE(h.snippet, '') AS snippet
+            FROM documents d LEFT JOIN h ON h.rowid = d.doc_id
+            WHERE (d.status = 'indexed' OR (? = 1 AND d.status = 'failed'))
+              AND (h.rowid IS NOT NULL OR (? = 1 AND d.file_name LIKE ? ESCAPE '\\'))
+              AND ({' OR '.join(clauses)}) AND d.file_ext IN ({placeholders})
+            ORDER BY {order} LIMIT ?
+        '''
+        parameters.append(limit)
+        with closing(self._connect()) as conn, conn:
+            return [dict(row) for row in conn.execute(sql, parameters)]

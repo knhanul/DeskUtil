@@ -18,3 +18,8 @@ class DocumentSearch:
     def get_stats(self):
         """통계 정보"""
         return self.db.get_stats()
+
+    def search_indexed(self, query, extensions, folders, search_content=True,
+                       search_filename=True, sort='relevance', limit=1000):
+        return self.db.search_indexed(query, extensions, folders, search_content,
+                                      search_filename, sort, limit)

@@ -1,7 +1,5 @@
 import os
 import re
-import unicodedata
-from difflib import SequenceMatcher
 
 import fitz
 from PyQt6.QtCore import QRect, QTimer, Qt
@@ -15,6 +13,7 @@ from app.common.resources import get_timer_gif_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.common.pdf_search_helper import PDFSearchHelper
 from app.common.pdf_compare_worker import CompareThreadManager
+from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
 
 
 # ──────────────────────────────────────────────────────────
@@ -521,64 +520,12 @@ class HFViewer(QScrollArea):
             h1 = page_h * self.header_ratio        # 상단 제외 경계
             h2 = page_h * (1.0 - self.footer_ratio)  # 하단 제외 경계
             raw_dict = page.get_text('rawdict')
-            for block in raw_dict.get('blocks', []):
-                if block.get('type') != 0:
-                    continue
-                for line in block.get('lines', []):
-                    for span in line.get('spans', []):
-                        for char in span.get('chars', []):
-                            c = char['c']
-                            bbox = char['bbox']
-                            # Header/Footer 영역 제외
-                            if bbox[3] <= h1 or bbox[1] >= h2:
-                                continue
-                            c_norm = unicodedata.normalize('NFC', c)
-                            all_raw_chars.append({
-                                'char': c_norm, 'bbox': bbox,
-                                'y': bbox[1], 'x': bbox[0], 'page': page_num
-                            })
-
-        if not all_raw_chars:
-            return
+            # Header/Footer 영역 제외
+            all_raw_chars.extend(collect_raw_chars(raw_dict, page_num, excluded_bounds=(h1, h2)))
 
         # Y좌표 기준 라인 그룹핑 (기존 로직 동일)
-        all_raw_chars.sort(key=lambda c: (c['page'], c['y']))
-        grouped = []
-        curr = [all_raw_chars[0]]
-        for i in range(1, len(all_raw_chars)):
-            same_page = all_raw_chars[i]['page'] == curr[-1]['page']
-            close_y = abs(all_raw_chars[i]['y'] - curr[-1]['y']) < 5.0
-            if same_page and close_y:
-                curr.append(all_raw_chars[i])
-            else:
-                grouped.append(curr)
-                curr = [all_raw_chars[i]]
-        grouped.append(curr)
-
         # 정규화 + word_id 부여 (기존 로직 동일)
-        final_norm = []
-        raw_lines = []
-        word_counter = 0
-        for line in grouped:
-            line.sort(key=lambda c: c['x'])
-            line_str_raw = []
-            word_counter += 1
-            page_num = line[0]['page']
-            for i, c in enumerate(line):
-                line_str_raw.append(c['char'])
-                if i > 0 and (line[i - 1]['char'].strip() == '' or abs(c['x'] - line[i - 1]['bbox'][2]) > 2.5):
-                    word_counter += 1
-                clean_char = c['char'].lower().strip()
-                if not re.match(r'[가-힣a-z0-9.,?!;:()\-\[\]{}\'"]', clean_char):
-                    continue
-                if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
-                    final_norm.append({
-                        'char': clean_char, 'bbox': c['bbox'],
-                        'x': c['x'], 'y': c['y'], 'page': page_num, 'word_id': word_counter
-                    })
-            raw_lines.append(''.join(line_str_raw))
-        self.char_data = final_norm
-        self.raw_text = '\n'.join(raw_lines)
+        self.char_data, self.raw_text = normalize_raw_chars(all_raw_chars, page_aware=True)
 
     def _on_page_return_pressed(self):
         self._on_goto_page()

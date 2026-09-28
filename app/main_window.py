@@ -285,16 +285,6 @@ class MdiMainWindow(QMainWindow):
                 'icon': '📄',
             },
             {
-                'key': 'dual_pane_manager',
-                'menu_title': '탐색기',
-                'window_title': '파일 관리자',
-                'module_path': 'app.tools.dual_pane_manager',
-                'class_name': 'DualPaneManager',
-                'singleton': True,
-                'enabled': True,
-                'icon': '🗂️',
-            },
-            {
                 'key': 'document_search',
                 'menu_title': '문서찾기',
                 'window_title': '문서 찾기',
@@ -379,20 +369,6 @@ class MdiMainWindow(QMainWindow):
         # 헤더와 사이드바 초기화
         self.header_title.setText(APP_NAME)
         self.set_active_sidebar_button(None)
-
-    def open_file_manager_with_folder(self, folder_path: str) -> None:
-        """파일 관리자를 열고 오른쪽 패널에 폴더 표시"""
-        if not folder_path or not os.path.isdir(folder_path):
-            return
-
-        # 파일 관리자 도구 열기
-        tool_key = 'dual_pane_manager'
-        self.open_tool(tool_key)
-
-        # 파일 관리자 위젯이 로드된 후 폴더 전달
-        if self.current_tool_key == tool_key and self.current_tool_widget:
-            if hasattr(self.current_tool_widget, 'open_folder_in_right_pane'):
-                self.current_tool_widget.open_folder_in_right_pane(folder_path)
 
     def show_legend_caution_for_active_tool(self):
         # Find the active PDF compare widget

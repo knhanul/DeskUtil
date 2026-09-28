@@ -64,8 +64,6 @@ def build(target_name: str, version: str = None, release_date: str = None, onefi
         '--hidden-import',
         'app.tools.pdf_header_footer_compare',
         '--hidden-import',
-        'app.tools.dual_pane_manager',
-        '--hidden-import',
         'app.tools.document_search_ui',
         '--hidden-import',
         'app.tools.pdf_generator_ui',

@@ -1,6 +1,6 @@
 # NuniDesk (DeskUtil)
 
-PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, 파일 관리자, 문서 검색 등의 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
+PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, PDF 생성, 문서 검색 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
 
 ## 주요 기능
 
@@ -8,7 +8,6 @@ PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입�
 | --- | --- | --- |
 | PDF 지정 영역 비교 | 📄 PDF 지정 영역 비교 | 두 PDF에서 사용자가 지정한 영역(AREA)을 추출해 정규화 후 문자열 단위로 정밀 비교 |
 | PDF 전체 비교 | 📄 PDF 전체 비교 | 페이지 단위 전체 비교. 헤더/푸터 영역을 드래그로 제외 영역으로 설정 가능 |
-| 파일 관리자 | 🗂️ 파일 관리자 | 듀얼 패널 파일 탐색기. 복사/이동/삭제(휴지통) 및 키보드 단축키 지원 |
 | 문서 찾기 | 🔍 문서 찾기 | 디렉터리를 색인화하여 PDF/DOCX/HWP/HWPX/XLSX 등의 본문 텍스트를 전문 검색(FTS5) |
 
 ### 지원 문서 포맷 (문서 찾기)
@@ -32,7 +31,6 @@ DeskUtil/
 │   └── tools/
 │       ├── pdf_compare.py           # PDF 지정 영역 비교
 │       ├── pdf_header_footer_compare.py  # PDF 전체 비교
-│       ├── dual_pane_manager.py     # 듀얼 패널 파일 관리자
 │       ├── document_search_ui.py    # 문서 찾기 UI
 │       └── integrated_previewer.py  # 통합 문서 미리보기
 ├── configs/
@@ -80,7 +78,7 @@ DeskUtil/
 - Windows 10/11
 - Python 3.12+
 - 의존성: `requirements.txt` 참조
-  - PyQt6, PyMuPDF, python-docx, openpyxl, pandas, pyxlsb, pyhwpx, olefile, send2trash
+  - PyQt6, PyMuPDF, python-docx, openpyxl, pandas, pyxlsb, pyhwpx, olefile, Pillow
   - 빌드 시 추가: `pyinstaller`
 
 ## 개발 환경 설정

@@ -33,3 +33,32 @@ class FileScanner:
                 files.append(str(file_path))
         
         return files
+
+    def scan_index_files(self, extensions: set[str], cancelled=None):
+        files = []
+        unsupported = 0
+        complete = True
+
+        def on_error(error):
+            nonlocal complete
+            complete = False
+
+        for root in self.root_directories:
+            if not os.path.isdir(root):
+                complete = False
+                continue
+            for directory, dirs, names in os.walk(root, followlinks=False, onerror=on_error):
+                if cancelled and cancelled():
+                    complete = False
+                    break
+                dirs[:] = [name for name in dirs if not os.path.islink(os.path.join(directory, name))
+                           and not getattr(Path(directory, name), 'is_junction', lambda: False)()]
+                for name in names:
+                    path = os.path.join(directory, name)
+                    if os.path.islink(path):
+                        continue
+                    if Path(name).suffix.lower() in extensions:
+                        files.append(os.path.normpath(path))
+                    else:
+                        unsupported += 1
+        return files, unsupported, complete

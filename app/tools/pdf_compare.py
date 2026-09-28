@@ -1,7 +1,5 @@
 import os
 import re
-import unicodedata
-from difflib import SequenceMatcher
 
 import fitz
 from PyQt6.QtCore import QEasingCurve, QPoint, QParallelAnimationGroup, QPropertyAnimation, QRect, QTimer, Qt, QMimeData
@@ -12,6 +10,7 @@ from app.common.resources import get_resource_path, get_timer_gif_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.common.pdf_search_helper import PDFSearchHelper
 from app.common.pdf_compare_worker import CompareThreadManager
+from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
 
 
 class ViewComparisonTextDialog(QDialog):
@@ -494,44 +493,8 @@ class PDFViewer(QScrollArea):
         fitz_rect = fitz.Rect(x0, y0, x1, y1)
         page = self.pdf_doc.load_page(page_num)
         raw_dict = page.get_text('rawdict', clip=fitz_rect)
-        all_raw_chars = []
-        for block in raw_dict.get('blocks', []):
-            for line in block.get('lines', []):
-                for span in line.get('spans', []):
-                    for char in span.get('chars', []):
-                        c = char['c']
-                        c_norm = unicodedata.normalize('NFC', c)
-                        all_raw_chars.append({'char': c_norm, 'bbox': char['bbox'], 'y': char['bbox'][1], 'x': char['bbox'][0]})
-        if not all_raw_chars:
-            return [], ''
-        all_raw_chars.sort(key=lambda x: x['y'])
-        grouped = []
-        curr = [all_raw_chars[0]]
-        for i in range(1, len(all_raw_chars)):
-            if all_raw_chars[i]['y'] - curr[-1]['y'] < 5.0:
-                curr.append(all_raw_chars[i])
-            else:
-                grouped.append(curr)
-                curr = [all_raw_chars[i]]
-        grouped.append(curr)
-        final_norm = []
-        raw_lines = []
-        word_counter = 0
-        for line in grouped:
-            line.sort(key=lambda x: x['x'])
-            line_str_raw = []
-            word_counter += 1
-            for i, c in enumerate(line):
-                line_str_raw.append(c['char'])
-                if i > 0 and (line[i - 1]['char'].strip() == '' or abs(c['x'] - line[i - 1]['bbox'][2]) > 2.5):
-                    word_counter += 1
-                clean_char = c['char'].lower().strip()
-                if not re.match(r'[가-힣a-z0-9.,?!;:()\-\[\]{}\'"]', clean_char):
-                    continue
-                if not final_norm or not (clean_char == final_norm[-1]['char'] and abs(c['x'] - final_norm[-1]['x']) < 2.5):
-                    final_norm.append({'char': clean_char, 'bbox': c['bbox'], 'x': c['x'], 'y': c['y'], 'page': page_num, 'word_id': word_counter})
-            raw_lines.append(''.join(line_str_raw))
-        return final_norm, '\n'.join(raw_lines)
+        all_raw_chars = collect_raw_chars(raw_dict, page_num)
+        return normalize_raw_chars(all_raw_chars)
 
     def _on_page_return_pressed(self):
         self._on_goto_page()

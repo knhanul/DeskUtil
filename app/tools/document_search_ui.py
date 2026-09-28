@@ -171,6 +171,7 @@ try:
         QMessageBox,
         QProgressBar,
         QPushButton,
+        QRadioButton,
         QScrollArea,
         QSizePolicy,
         QSplitter,
@@ -211,6 +212,7 @@ except ImportError:
         QMessageBox,
         QProgressBar,
         QPushButton,
+        QRadioButton,
         QScrollArea,
         QSizePolicy,
         QSplitter,
@@ -840,7 +842,11 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from doc_search.extractors import get_extractor
+from doc_search.indexer import user_database_path
+from doc_search.search import DocumentSearch
+from doc_search.database.fts5_db import FTS5Database
 from .integrated_previewer import IntegratedPreviewer
+from .index_manager_ui import IndexManagerDialog
 
 
 # Preview page indices for QStackedWidget
@@ -1145,10 +1151,38 @@ class SearchWorker(QThread):
         return snippet
 
 
+class IndexedSearchWorker(QThread):
+    results_ready = Signal(list)
+    search_failed = Signal(str)
+
+    def __init__(self, db_path, query, extensions, folders, search_content, search_filename, sort, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.query = query
+        self.extensions = extensions
+        self.folders = folders
+        self.search_content = search_content
+        self.search_filename = search_filename
+        self.sort = sort
+
+    def run(self):
+        try:
+            rows = DocumentSearch(self.db_path).search_indexed(
+                self.query, self.extensions, self.folders,
+                self.search_content, self.search_filename, self.sort,
+            )
+            self.results_ready.emit(rows)
+        except Exception as exc:
+            self.search_failed.emit(str(exc))
+
+
 class DocumentSearchMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.search_worker = None
+        self.indexed_search_worker = None
+        self._search_is_indexed = False
+        self.index_db_path = user_database_path()
         self.current_folder = ''
         self.current_preview_path = ''
         self._preview_original_pixmap: QPixmap | None = None
@@ -1177,6 +1211,20 @@ class DocumentSearchMainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
+
+        mode_row = QHBoxLayout()
+        self.fast_mode_radio = QRadioButton('빠른 검색')
+        self.live_mode_radio = QRadioButton('실시간 검색')
+        self.fast_mode_radio.setChecked(True)
+        mode_row.addWidget(self.fast_mode_radio)
+        mode_row.addWidget(self.live_mode_radio)
+        self.index_status_label = QLabel('최근 색인: 없음')
+        mode_row.addWidget(self.index_status_label)
+        mode_row.addStretch()
+        self.index_manage_button = QPushButton('색인 관리')
+        self.index_manage_button.setObjectName('actionBtn')
+        mode_row.addWidget(self.index_manage_button)
+        root.addLayout(mode_row)
 
         self.vertical_splitter = QSplitter(Qt.Orientation.Vertical)
         self.vertical_splitter.setChildrenCollapsible(False)
@@ -1307,6 +1355,17 @@ class DocumentSearchMainWindow(QMainWindow):
         self.search_input.setPlaceholderText("검색어를 입력하세요")
         self.search_input.setClearButtonEnabled(True)
         layout.addWidget(self.search_input)
+        quick_options = QHBoxLayout()
+        self.search_content_check = QCheckBox('본문')
+        self.search_filename_check = QCheckBox('파일명')
+        self.selected_folders_check = QCheckBox('선택 폴더만')
+        self.search_content_check.setChecked(True)
+        self.search_filename_check.setChecked(True)
+        quick_options.addWidget(self.search_content_check)
+        quick_options.addWidget(self.search_filename_check)
+        quick_options.addWidget(self.selected_folders_check)
+        quick_options.addStretch()
+        layout.addLayout(quick_options)
 
         # 검색 시작 버튼
         controls = QHBoxLayout()
@@ -1602,6 +1661,10 @@ class DocumentSearchMainWindow(QMainWindow):
         self.folder_tree.itemSelectionChanged.connect(self._sync_selected_folder)
         for checkbox in self.file_type_checkboxes.values():
             checkbox.toggled.connect(self._update_conditions_summary)
+        self.fast_mode_radio.toggled.connect(self._update_mode)
+        self.index_manage_button.clicked.connect(self.open_index_manager)
+        self._update_mode()
+        self.update_index_status()
 
     def _build_menu(self) -> None:
         refresh_action = QAction("새로고침", self)
@@ -1769,6 +1832,31 @@ class DocumentSearchMainWindow(QMainWindow):
     def _selected_extensions(self) -> set[str]:
         return {extension for extension, checkbox in self.file_type_checkboxes.items() if checkbox.isChecked()}
 
+    def _update_mode(self, checked=None) -> None:
+        quick = self.fast_mode_radio.isChecked()
+        for control in (self.search_content_check, self.search_filename_check, self.selected_folders_check):
+            control.setVisible(quick)
+        self.search_button.setText('빠른 검색' if quick else '🔍 검색 시작')
+
+    def update_index_status(self):
+        if not self.index_db_path.is_file():
+            self.index_status_label.setText('최근 색인: 없음')
+            return
+        try:
+            updated = FTS5Database(str(self.index_db_path)).index_stats()['updated_at']
+            self.index_status_label.setText(f"최근 색인: {updated or '없음'}")
+        except Exception:
+            self.index_status_label.setText('색인 상태를 확인할 수 없습니다.')
+
+    def open_index_manager(self):
+        try:
+            dialog = IndexManagerDialog(self.index_db_path, set(self.supported_file_types), self)
+            dialog.index_updated.connect(self.update_index_status)
+            dialog.exec()
+            self.update_index_status()
+        except Exception as exc:
+            QMessageBox.critical(self, '색인 관리 오류', f'색인 DB를 열 수 없습니다.\n{exc}')
+
     def _update_conditions_summary(self) -> None:
         selected_labels = [label for extension, label in self.supported_file_types.items() if self.file_type_checkboxes[extension].isChecked()]
         if not selected_labels:
@@ -1778,6 +1866,10 @@ class DocumentSearchMainWindow(QMainWindow):
         self.conditions_summary_label.setText('검색 대상 형식: ' + ', '.join(selected_labels) + f' | 조각 문구: {snippet_mode}')
 
     def _start_search(self) -> None:
+        if self.fast_mode_radio.isChecked():
+            self._start_indexed_search()
+            return
+        self._search_is_indexed = False
         # 결과 초기화
         self.result_model.clear()
         self._result_payloads.clear()
@@ -1829,6 +1921,84 @@ class DocumentSearchMainWindow(QMainWindow):
         self.search_worker.search_failed.connect(self._fail_search)
         self.search_worker.start()
 
+    def _start_indexed_search(self):
+        if self.indexed_search_worker and self.indexed_search_worker.isRunning():
+            return
+        query = self.search_input.text().strip()
+        if not query:
+            QMessageBox.information(self, '검색어 입력', '검색어를 입력하세요.')
+            return
+        extensions = self._selected_extensions()
+        if not extensions:
+            QMessageBox.information(self, '파일 형식 선택', '하나 이상의 문서 파일 형식을 선택하세요.')
+            return
+        if not self.search_content_check.isChecked() and not self.search_filename_check.isChecked():
+            QMessageBox.information(self, '검색 대상 선택', '본문 또는 파일명을 선택하세요.')
+            return
+        try:
+            self.index_db_path.parent.mkdir(parents=True, exist_ok=True)
+            roots = FTS5Database(str(self.index_db_path)).list_folders()
+        except Exception as exc:
+            QMessageBox.warning(self, '빠른 검색', f'색인 DB를 열 수 없습니다.\n{exc}')
+            return
+        if not roots:
+            QMessageBox.information(self, '빠른 검색', '색인 관리에서 폴더를 추가하고 색인을 생성해 주세요.')
+            return
+        folders = sorted(self.checked_folder_paths_set) if self.selected_folders_check.isChecked() else roots
+        if not folders:
+            QMessageBox.information(self, '폴더 선택', '왼쪽 트리에서 검색할 폴더를 체크하세요.')
+            return
+        self._search_is_indexed = True
+        self.result_model.clear()
+        self._result_payloads.clear()
+        self.result_count_label.setText('0개 문서')
+        self.result_stack.setCurrentIndex(0)
+        self._clear_preview()
+        self._current_query = query
+        self.search_button.setEnabled(False)
+        self.index_manage_button.setEnabled(False)
+        self.progress_bar.setRange(0, 0)
+        self.progress_title.setText('색인에서 검색 중')
+        self.progress_status.setText('색인된 문서 검색 중...')
+        self.progress_details.setText('')
+        self.indexed_search_worker = IndexedSearchWorker(
+            str(self.index_db_path), query, extensions, folders,
+            self.search_content_check.isChecked(), self.search_filename_check.isChecked(),
+            self.sort_combo.currentData(), self,
+        )
+        self.indexed_search_worker.results_ready.connect(self._finish_indexed_search)
+        self.indexed_search_worker.search_failed.connect(self._fail_indexed_search)
+        self.indexed_search_worker.finished.connect(self._indexed_search_thread_finished)
+        self.indexed_search_worker.start()
+
+    def _finish_indexed_search(self, rows):
+        for row in rows:
+            self._append_result(
+                row['file_name'], row['file_path'], row['snippet'] or '', '',
+                format_datetime(row['created_at']) if row['created_at'] else '-',
+                format_datetime(row['mtime_ns'] / 1_000_000_000) if row['mtime_ns'] else '-',
+                format_file_size(row['file_size'] or 0), row['file_ext'].lstrip('.').upper(),
+            )
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.progress_title.setText('빠른 검색 완료')
+        self.progress_status.setText(f'{len(rows):,}개 결과')
+        self.progress_details.setText('파일을 열지 않고 색인에서 검색했습니다.')
+        self.search_button.setEnabled(True)
+        self.index_manage_button.setEnabled(True)
+
+    def _fail_indexed_search(self, message):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_title.setText('빠른 검색 오류')
+        self.progress_status.setText(message)
+        self.search_button.setEnabled(True)
+        self.index_manage_button.setEnabled(True)
+
+    def _indexed_search_thread_finished(self):
+        self.indexed_search_worker.deleteLater()
+        self.indexed_search_worker = None
+
     def _append_result(self, file_name: str, file_path: str, snippet: str, preview: str, created_at: str, modified_at: str, file_size: str, file_kind: str) -> None:
         payload = {
             'file_name': file_name,
@@ -1862,7 +2032,8 @@ class DocumentSearchMainWindow(QMainWindow):
             # 검색어 설정
             self.result_model.set_search_query(self._current_query)
             # 첫 번째 아이템 선택
-            self.result_view.setCurrentIndex(self.result_proxy.index(0, 0))
+            if not self._search_is_indexed:
+                self.result_view.setCurrentIndex(self.result_proxy.index(0, 0))
     
     def _on_result_double_clicked(self, index: QModelIndex) -> None:
         """검색 결과 더블클릭 시 파일 열기 (QListView 기반)"""
@@ -1870,7 +2041,7 @@ class DocumentSearchMainWindow(QMainWindow):
         payload = self.result_model.get_payload_at(source_index.row())
         if payload:
             file_path = payload.get('file_path', '')
-            if file_path and os.path.exists(file_path):
+            if file_path:
                 self._open_file(file_path)
 
     def _show_result_context_menu(self, position: QPoint) -> None:
@@ -1899,17 +2070,19 @@ class DocumentSearchMainWindow(QMainWindow):
         open_action = QAction("파일 열기", self)
         open_action.triggered.connect(lambda: self._open_file(file_path))
         menu.addAction(open_action)
-
-        # 폴더 열기 메뉴
-        folder_action = QAction("파일 경로 열기", self)
-        folder_action.triggered.connect(lambda: self._open_folder(file_path))
-        menu.addAction(folder_action)
+        if self._search_is_indexed and not os.path.exists(file_path):
+            remove_action = QAction('색인에서 제거', self)
+            remove_action.triggered.connect(lambda: self._remove_indexed_result(file_path))
+            menu.addAction(remove_action)
 
         # 메뉴 표시
         menu.exec(self.result_view.viewport().mapToGlobal(position))
 
     def _open_file(self, file_path: str) -> None:
         """파일 열기"""
+        if not os.path.exists(file_path):
+            QMessageBox.information(self, '파일 열기', '파일을 찾을 수 없습니다. 색인 업데이트를 실행해 주세요.')
+            return
         try:
             if os.name == 'nt':  # Windows
                 os.startfile(file_path)
@@ -1918,23 +2091,12 @@ class DocumentSearchMainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "파일 열기 오류", f"파일을 열 수 없습니다:\n{e}")
 
-    def _open_folder(self, file_path: str) -> None:
-        """파일이 있는 폴더 열기 - 파일 관리자 위젯에서 오른쪽 패널에 표시"""
-        try:
-            folder_path = os.path.dirname(file_path)
-            
-            # 메인 윈도우에 파일 관리자 열기 요청
-            main_window = self.window()
-            if main_window and hasattr(main_window, 'open_file_manager_with_folder'):
-                main_window.open_file_manager_with_folder(folder_path)
-            else:
-                # 메인 윈도우 메서드가 없으면 시스템 탐색기로 폴백
-                if os.name == 'nt':  # Windows
-                    subprocess.run(f'explorer /select,"{file_path}"', shell=True, check=True)
-                else:  # macOS, Linux
-                    subprocess.run(['xdg-open', folder_path], check=True)
-        except Exception as e:
-            QMessageBox.warning(self, "폴더 열기 오류", f"폴더를 열 수 없습니다:\n{e}")
+    def _remove_indexed_result(self, file_path):
+        if QMessageBox.question(self, '색인에서 제거', '선택한 파일의 색인만 제거합니다. 원본 파일은 삭제되지 않습니다.\n계속하시겠습니까?'
+                                ) != QMessageBox.StandardButton.Yes:
+            return
+        FTS5Database(str(self.index_db_path)).remove_indexed([file_path])
+        self._start_indexed_search()
 
     def _rerender_result_items(self, checked: bool | None = None) -> None:
         """조각 문구 표시 상태 변경 시 결과 재렌더링"""
@@ -2788,6 +2950,12 @@ class DocumentSearchWidget(QWidget):
         if central is not None:
             central.setParent(self)
             layout.addWidget(central)
+
+    def closeEvent(self, event):
+        worker = self.window_adapter.indexed_search_worker
+        if worker and worker.isRunning():
+            worker.wait()
+        super().closeEvent(event)
 
 
 if __name__ == "__main__":

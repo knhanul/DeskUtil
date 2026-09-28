@@ -10,8 +10,9 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication
 
 from app.common.pdf_compare_worker import PdfCompareWorker
+from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
 from app.tools.pdf_compare import PDFViewer, PdfCompareWidget
-from app.tools.pdf_header_footer_compare import HFCompareWidget
+from app.tools.pdf_header_footer_compare import HFCompareWidget, HFViewer
 
 
 class MultiPageSelectionTests(unittest.TestCase):
@@ -36,6 +37,61 @@ class MultiPageSelectionTests(unittest.TestCase):
 
     def select(self, viewer, page):
         viewer.on_selection_complete(page, QRect(30, 55, 260, 110))
+
+    def test_shared_normalization_preserves_filtering_and_word_ids(self):
+        characters = [('A', 10), ('A', 10.5), (' ', 14), ('B', 18),
+                      ('?', 22), ('\t', 26), ('C', 30), ('e\u0301', 34)]
+        raw_dict = {'blocks': [
+            {'type': 0, 'lines': [{'spans': [{'chars': [
+                {'c': character, 'bbox': (x, 10, x + 2, 18)} for character, x in characters
+            ]}]}]},
+            {'type': 1, 'lines': [{'spans': [{'chars': [
+                {'c': 'Z', 'bbox': (40, 10, 42, 18)}
+            ]}]}]},
+        ]}
+        area_chars, area_raw = normalize_raw_chars(collect_raw_chars(raw_dict, 0))
+        self.assertEqual(''.join(char['char'] for char in area_chars), 'ab?cz')
+        self.assertEqual(area_raw, 'AA B?\tCéZ')
+        self.assertEqual([char['word_id'] for char in area_chars], [1, 2, 2, 3, 4])
+        full_chars, full_raw = normalize_raw_chars(
+            collect_raw_chars(raw_dict, 0, excluded_bounds=(0, 100)), page_aware=True
+        )
+        self.assertEqual(''.join(char['char'] for char in full_chars), 'ab?c')
+        self.assertEqual(full_raw, 'AA B?\tCé')
+        self.assertEqual([char['word_id'] for char in full_chars], [1, 2, 2, 3])
+        self.assertEqual(collect_raw_chars(raw_dict, 0, excluded_bounds=(18, 100)), [])
+        self.assertEqual(normalize_raw_chars([]), ([], ''))
+
+    def test_area_and_full_text_extraction_contract(self):
+        path = Path(self.temp.name) / 'contract.pdf'
+        pdf = pymupdf.open()
+        for body in ('Alpha (1)', 'Beta - XYZ'):
+            page = pdf.new_page(width=300, height=400)
+            page.insert_text((40, 15), 'HEAD', fontsize=10)
+            page.insert_text((40, 75), body, fontsize=16)
+        pdf.save(path)
+        pdf.close()
+        area = PDFViewer()
+        full = HFViewer()
+        self.assertTrue(area.load_pdf(path))
+        self.addCleanup(area.pdf_doc.close)
+        self.assertTrue(full.load_pdf(path))
+        self.addCleanup(full.pdf_doc.close)
+        chars, raw = area.extract_and_process_text(0, QRect(30, 55, 280, 100))
+        self.assertEqual(''.join(char['char'] for char in chars), 'alpha(1)')
+        self.assertEqual(raw, 'Alpha (1)')
+        self.assertEqual({char['page'] for char in chars}, {0})
+        full.extract_body_text()
+        self.assertEqual(''.join(char['char'] for char in full.char_data), 'alpha(1)beta-xyz')
+        self.assertEqual(full.raw_text, 'Alpha (1)\nBeta - XYZ')
+        self.assertEqual({char['page'] for char in full.char_data}, {0, 1})
+        self.assertEqual([(char['char'], char['word_id']) for char in chars],
+                         [(char['char'], char['word_id']) for char in full.char_data if char['page'] == 0])
+        full.header_ratio = 0
+        full.extract_body_text()
+        self.assertIn('head', ''.join(char['char'] for char in full.char_data))
+        area.close()
+        full.close()
 
     def test_single_selection_and_navigation_keep_previous_page(self):
         viewer = PDFViewer()
