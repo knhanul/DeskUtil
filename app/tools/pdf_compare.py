@@ -213,6 +213,8 @@ class SelectableLabel(QLabel):
 
 
 class PDFViewer(QScrollArea):
+    DEFAULT_EXCLUSION_RATIO = 0.05
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('pdfViewerArea')
@@ -500,7 +502,7 @@ class PDFViewer(QScrollArea):
             pdf_doc = fitz.open(path)
             self.clear_all_data()
             self.pdf_doc = pdf_doc
-            self.set_exclusion_ratios(0, 0, rebuild=False)
+            self.set_exclusion_ratios(self.DEFAULT_EXCLUSION_RATIO, self.DEFAULT_EXCLUSION_RATIO, rebuild=False)
             self.reload_pages()
             if self.parent_tool:
                 self.parent_tool.invalidate_comparison_results()
@@ -597,6 +599,13 @@ class PDFViewer(QScrollArea):
             self.drop_label.hide()
         if hasattr(self, 'open_pdf_btn'):
             self.open_pdf_btn.hide()
+        if self.parent_tool:
+            if self == self.parent_tool.viewer1:
+                if hasattr(self.parent_tool, 'hf_instruction_label1'):
+                    self.parent_tool.hf_instruction_label1.hide()
+            elif self == self.parent_tool.viewer2:
+                if hasattr(self.parent_tool, 'hf_instruction_label2'):
+                    self.parent_tool.hf_instruction_label2.hide()
         
         for lbl in self.page_labels:
             lbl.setParent(None)
@@ -616,6 +625,21 @@ class PDFViewer(QScrollArea):
             self.page_labels.append(lbl)
             self.page_base_pixmaps.append(base_pixmap)
         self.refresh_highlights()
+        QTimer.singleShot(100, self._ensure_header_footer_visible)
+
+    def _ensure_header_footer_visible(self):
+        """첫 페이지의 Header와 Footer 조절 영역이 모두 보이도록 스크롤"""
+        if not self.page_labels:
+            return
+        self.container.adjustSize()
+        QApplication.processEvents()
+        first_label = self.page_labels[0]
+        page_height = first_label.height()
+        if page_height == 0:
+            QTimer.singleShot(100, self._ensure_header_footer_visible)
+            return
+        scroll_to = int(page_height * 0.05)
+        self.verticalScrollBar().setValue(scroll_to)
 
     def refresh_highlights(self):
         for i, lbl in enumerate(self.page_labels):
@@ -847,6 +871,13 @@ class PDFViewer(QScrollArea):
             self.drop_label.show()
         if hasattr(self, 'open_pdf_btn'):
             self.open_pdf_btn.show()
+        if self.parent_tool:
+            if self == self.parent_tool.viewer1:
+                if hasattr(self.parent_tool, 'hf_instruction_label1'):
+                    self.parent_tool.hf_instruction_label1.show()
+            elif self == self.parent_tool.viewer2:
+                if hasattr(self.parent_tool, 'hf_instruction_label2'):
+                    self.parent_tool.hf_instruction_label2.show()
         self.refresh_highlights()
 
 
@@ -886,6 +917,21 @@ class PdfCompareWidget(QWidget):
         
         # Add toolbar
         v1_layout.addWidget(self.viewer1.toolbar)
+
+        # Header/Footer instruction message for PDF1
+        self.hf_instruction_label1 = QLabel(
+            "📜 <b>머릿글/바닥글 제외 설정</b><br>"
+            "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
+            "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
+        )
+        self.hf_instruction_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hf_instruction_label1.setStyleSheet(
+            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
+            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
+        )
+        self.hf_instruction_label1.setContentsMargins(10, 8, 10, 8)
+        v1_layout.addWidget(self.hf_instruction_label1)
+
         v1_layout.addWidget(self.viewer1, 1)
         
         # Create PDF name labels
@@ -910,6 +956,21 @@ class PdfCompareWidget(QWidget):
         
         # Add toolbar
         v2_layout.addWidget(self.viewer2.toolbar)
+
+        # Header/Footer instruction message for PDF2
+        self.hf_instruction_label2 = QLabel(
+            "📜 <b>머릿글/바닥글 제외 설정</b><br>"
+            "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
+            "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
+        )
+        self.hf_instruction_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hf_instruction_label2.setStyleSheet(
+            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
+            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
+        )
+        self.hf_instruction_label2.setContentsMargins(10, 8, 10, 8)
+        v2_layout.addWidget(self.hf_instruction_label2)
+
         v2_layout.addWidget(self.viewer2, 1)
         
         # Bottom controls for PDF 2 (removed - moved to bottom bar)
@@ -1417,9 +1478,9 @@ class PdfCompareWidget(QWidget):
     def _deferred_full_refresh(self):
         """지연된 전체 갱신"""
         if hasattr(self, 'viewer1') and self.viewer1:
-            self.viewer1.reload_pages()
+            self.viewer1.refresh_highlights()
         if hasattr(self, 'viewer2') and self.viewer2:
-            self.viewer2.reload_pages()
+            self.viewer2.refresh_highlights()
         # 전체 갱신 완료 후 오버레이 숨김
         self.show_loading(False)
         self.btn_compare.setEnabled(True)

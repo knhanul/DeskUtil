@@ -287,8 +287,8 @@ class MultiPageSelectionTests(unittest.TestCase):
         widget.last_s1_raw = widget.last_s2_raw = 'Old'
         widget.diff_list = [{'pdf': 'PDF 1', 'page': 1}]
         widget.viewer1.set_exclusion_ratios(0.1, 0.1)
-        self.assertEqual(widget.viewer2.header_ratio, 0)
-        self.assertEqual(widget.viewer2.footer_ratio, 0)
+        self.assertAlmostEqual(widget.viewer2.header_ratio, 0.05)
+        self.assertAlmostEqual(widget.viewer2.footer_ratio, 0.05)
         for viewer in (widget.viewer1, widget.viewer2):
             self.assertEqual(set(viewer.selection_areas), {0, 1})
             self.assertEqual(viewer.raw_text, 'First\nSecond')
@@ -301,6 +301,23 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.assertEqual(widget.last_s2_raw, '')
         self.assertFalse(widget.diff_list)
 
+    def test_instruction_labels_and_default_exclusion_match_full_compare(self):
+        widget = PdfCompareWidget()
+        self.addCleanup(widget.close)
+        for label in (widget.hf_instruction_label1, widget.hf_instruction_label2):
+            self.assertIn('머릿글/바닥글 제외 설정', label.text())
+            self.assertFalse(label.isHidden())
+        for viewer in (widget.viewer1, widget.viewer2):
+            self.assertTrue(viewer.load_pdf(self.make_pdf(f'{id(viewer)}.pdf', ['First'])))
+            self.addCleanup(viewer.pdf_doc.close)
+            self.assertAlmostEqual(viewer.header_ratio, 0.05)
+            self.assertAlmostEqual(viewer.footer_ratio, 0.05)
+        self.assertTrue(widget.hf_instruction_label1.isHidden())
+        self.assertTrue(widget.hf_instruction_label2.isHidden())
+        widget.viewer1.clear_all_data()
+        self.assertFalse(widget.hf_instruction_label1.isHidden())
+        self.assertTrue(widget.hf_instruction_label2.isHidden())
+
     def test_exclusion_edges_drag_directly_without_starting_selection(self):
         from PyQt6.QtCore import QPoint, Qt
         from PyQt6.QtTest import QTest
@@ -312,7 +329,7 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.assertFalse(hasattr(viewer, 'footer_spin'))
         label = viewer.page_labels[0]
         image = label._image_rect()
-        point = QPoint(image.center().x(), image.top())
+        point = QPoint(image.center().x(), image.y() + round(image.height() * 0.05))
         QTest.mouseMove(label, point)
         self.assertEqual(label.cursor().shape(), Qt.CursorShape.SizeVerCursor)
         QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=point)
@@ -325,7 +342,7 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.assertFalse(viewer.auto_scroll_timer.isActive())
         label = viewer.page_labels[1]
         image = label._image_rect()
-        point = QPoint(image.center().x(), image.bottom())
+        point = QPoint(image.center().x(), image.y() + round(image.height() * 0.95))
         QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=point)
         point.setY(image.y() + round(image.height() * 0.9))
         QTest.mouseMove(label, point)
@@ -415,6 +432,44 @@ class MultiPageSelectionTests(unittest.TestCase):
         QTimer.singleShot(200, loop.quit)
         loop.exec()
         widget.close()
+
+    def test_area_comparison_keeps_each_viewers_scroll_position(self):
+        from PyQt6.QtCore import QEventLoop, QTimer
+        widget = PdfCompareWidget()
+        self.addCleanup(widget.close)
+        for viewer, name, texts in (
+            (widget.viewer1, 'position1.pdf', ['Cover', 'Same', 'Left', 'Tail']),
+            (widget.viewer2, 'position2.pdf', ['Cover', 'Same', 'Right', 'Tail']),
+        ):
+            self.assertTrue(viewer.load_pdf(self.make_pdf(name, texts)))
+            self.addCleanup(viewer.pdf_doc.close)
+            self.select_pages(viewer, 1, 2)
+        loop = QEventLoop()
+        QTimer.singleShot(300, loop.quit)
+        loop.exec()
+        widget.viewer1.verticalScrollBar().setValue(widget.viewer1.page_labels[1].y() + 40)
+        widget.viewer2.verticalScrollBar().setValue(widget.viewer2.page_labels[2].y() + 60)
+        positions = [(viewer.verticalScrollBar().value(), viewer.horizontalScrollBar().value(), viewer.page_spin.text())
+                     for viewer in (widget.viewer1, widget.viewer2)]
+        labels = [list(viewer.page_labels) for viewer in (widget.viewer1, widget.viewer2)]
+        for _ in range(2):
+            widget.btn_compare.click()
+            loop = QEventLoop()
+            widget.compare_manager.result_ready.connect(loop.quit)
+            QTimer.singleShot(3000, loop.quit)
+            loop.exec()
+            self.assertEqual(widget.last_s1_norm, 'sameleft')
+            self.assertEqual(widget.last_s2_norm, 'sameright')
+            loop = QEventLoop()
+            QTimer.singleShot(350, loop.quit)
+            loop.exec()
+            self.assertTrue(widget.btn_compare.isEnabled())
+            for viewer, position, previous_labels in zip((widget.viewer1, widget.viewer2), positions, labels):
+                self.assertEqual((viewer.verticalScrollBar().value(), viewer.horizontalScrollBar().value(),
+                                  viewer.page_spin.text()), position)
+                self.assertEqual(viewer.page_labels, previous_labels)
+                self.assertTrue(viewer.word_highlights)
+                self.assertNotEqual(viewer.page_labels[2].pixmap().toImage(), viewer.page_base_pixmaps[2].toImage())
 
     def test_full_compare_scroll_stays_continuous_before_comparison(self):
         from PyQt6.QtCore import QEventLoop, QTimer
