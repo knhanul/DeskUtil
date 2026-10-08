@@ -4,7 +4,7 @@ import re
 import fitz
 from PyQt6.QtCore import QEasingCurve, QPoint, QParallelAnimationGroup, QPropertyAnimation, QRect, QTimer, Qt, QMimeData
 from PyQt6.QtGui import QColor, QFont, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget
 
 from app.common.resources import get_resource_path, get_timer_gif_path
 from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
@@ -80,6 +80,11 @@ class SelectableLabel(QLabel):
         self.page_num = -1
         self.setStyleSheet('border: 0.5px solid #C6C6C8; background-color: white; border-radius: 4px;')
         self.setMargin(0)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setToolTip('상단·하단 주황색 경계를 드래그하여 제외 영역 설정 · 본문은 페이지를 넘어 드래그하여 선택')
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.exclusion_edge = None
 
     def _image_rect(self):
         pix = self.pixmap()
@@ -98,39 +103,108 @@ class SelectableLabel(QLabel):
         y = min(max(point.y(), image_rect.top()), image_rect.bottom())
         return QPoint(x, y)
 
+    def viewer(self):
+        parent = self.parent()
+        while parent and not isinstance(parent, PDFViewer):
+            parent = parent.parent()
+        return parent
+
+    def edge_at(self, point):
+        viewer = self.viewer()
+        image = self._image_rect()
+        if not viewer or not image.contains(point):
+            return None
+        header_y = image.y() + image.height() * viewer.header_ratio
+        footer_y = image.y() + image.height() * (1 - viewer.footer_ratio)
+        if abs(point.y() - header_y) <= 8:
+            return 'header'
+        if abs(point.y() - footer_y) <= 8:
+            return 'footer'
+        return None
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.selection_start = self._clamp_to_image(event.pos())
-            self.selection_end = self.selection_start
-            self.is_selecting = True
-            self.update()
+        viewer = self.viewer()
+        if event.button() != Qt.MouseButton.LeftButton or not viewer:
+            return super().mousePressEvent(event)
+        if not self._image_rect().contains(event.pos()):
+            return
+        self.setFocus()
+        self.exclusion_edge = self.edge_at(event.pos())
+        if self.exclusion_edge:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+            return
+        self.is_selecting = True
+        viewer.begin_selection(self.mapTo(viewer.container, event.pos()), event.globalPosition().toPoint())
 
     def mouseMoveEvent(self, event):
-        if self.is_selecting:
-            self.selection_end = self._clamp_to_image(event.pos())
-            self.update()
+        viewer = self.viewer()
+        if not viewer:
+            return
+        if self.exclusion_edge:
+            image = self._image_rect()
+            ratio = (event.pos().y() - image.y()) / max(1, image.height())
+            header = min(ratio, 0.95 - viewer.footer_ratio) if self.exclusion_edge == 'header' else viewer.header_ratio
+            footer = min(1 - ratio, 0.95 - viewer.header_ratio) if self.exclusion_edge == 'footer' else viewer.footer_ratio
+            viewer.set_exclusion_ratios(header, footer, rebuild=False)
+        elif self.is_selecting:
+            viewer.move_selection(self.mapTo(viewer.container, event.pos()), event.globalPosition().toPoint())
+        else:
+            self.setCursor(Qt.CursorShape.SizeVerCursor if self.edge_at(event.pos())
+                           else Qt.CursorShape.CrossCursor)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
+        viewer = self.viewer()
+        if event.button() != Qt.MouseButton.LeftButton or not viewer:
+            return super().mouseReleaseEvent(event)
+        if self.exclusion_edge:
+            self.exclusion_edge = None
+            viewer.update_selection_data()
+        elif self.is_selecting:
             self.is_selecting = False
-            image_rect = self._image_rect()
-            selection_rect = QRect(self.selection_start, self.selection_end).normalized().intersected(image_rect)
-            parent = self.parent()
-            while parent and not isinstance(parent, PDFViewer):
-                parent = parent.parent()
-            if parent:
-                local_rect = selection_rect.translated(-image_rect.topLeft())
-                parent.on_selection_complete(self.page_num, local_rect)
-            self.update()
+            viewer.finish_selection(self.mapTo(viewer.container, event.pos()))
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.viewer():
+            self.viewer().cancel_selection()
+            if self.exclusion_edge:
+                self.exclusion_edge = None
+                self.viewer().update_selection_data()
+        else:
+            super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        image_rect = self._image_rect()
+        if not image_rect.contains(event.pos()):
+            return
+        viewer = self.viewer()
+        point = event.pos() - image_rect.topLeft()
+        if not viewer or viewer.selection_index_at(self.page_num, point) is None:
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction('선택 해제')
+        if menu.exec(event.globalPos()) == delete_action:
+            viewer.delete_selection_at(self.page_num, point)
+        event.accept()
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.selection_start and self.selection_end:
-            painter = QPainter(self)
+        viewer = self.viewer()
+        if not viewer or not self.pixmap():
+            return
+        painter = QPainter(self)
+        if self.selection_start is not None and self.selection_end is not None:
             painter.setBrush(QColor(0, 120, 255, 60))
             painter.setPen(QPen(QColor(0, 0, 255), 2, Qt.PenStyle.DashLine))
             painter.drawRect(QRect(self.selection_start, self.selection_end).normalized())
-            painter.end()
+        image = self._image_rect()
+        header_y = image.y() + round(image.height() * viewer.header_ratio)
+        footer_y = image.y() + round(image.height() * (1 - viewer.footer_ratio))
+        painter.fillRect(QRect(image.x(), image.y(), image.width(), header_y - image.y()), QColor(0, 0, 0, 90))
+        painter.fillRect(QRect(image.x(), footer_y, image.width(), image.y() + image.height() - footer_y), QColor(0, 0, 0, 90))
+        painter.setPen(QPen(QColor(255, 140, 0), 2, Qt.PenStyle.DashLine))
+        painter.drawLine(image.left(), header_y, image.right(), header_y)
+        painter.drawLine(image.left(), min(footer_y, image.bottom()), image.right(), min(footer_y, image.bottom()))
+        painter.end()
 
     def clear_selection(self):
         self.selection_start = None
@@ -158,6 +232,8 @@ class PDFViewer(QScrollArea):
         toolbar_layout = QHBoxLayout(self.toolbar)
         toolbar_layout.setContentsMargins(8, 4, 8, 4)
         toolbar_layout.setSpacing(0)
+        self.header_ratio = 0.0
+        self.footer_ratio = 0.0
         
         # Zoom controls - enlarged for visibility
         self.zoom_in_btn = QPushButton('🔍+')
@@ -264,6 +340,12 @@ class PDFViewer(QScrollArea):
         self.last_compared_area = {}
         self.pending_selection_rect = None
         self.selection_areas = {}
+        self.drag_start = None
+        self.drag_end = None
+        self.drag_global_pos = None
+        self.auto_scroll_timer = QTimer(self)
+        self.auto_scroll_timer.setInterval(30)
+        self.auto_scroll_timer.timeout.connect(self.auto_scroll_selection)
         
         # Add drop zone indicator when empty
         self.drop_label = QLabel('📄 PDF 파일을 여기에 드래그 앤 드랍하세요\n또는 아래 버튼을 클릭하여 파일을 선택하세요')
@@ -298,6 +380,106 @@ class PDFViewer(QScrollArea):
         self.parent_tool = None  # Reference to parent tool for callback
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_page_changed)
 
+    def set_exclusion_ratios(self, header, footer, rebuild=True):
+        self.header_ratio = max(0.0, min(0.95, header))
+        self.footer_ratio = max(0.0, min(0.95 - self.header_ratio, footer))
+        for label in self.page_labels:
+            label.update()
+        if rebuild:
+            self.update_selection_data()
+
+    def page_image_rect(self, page_num):
+        label = self.page_labels[page_num]
+        return label._image_rect().translated(label.mapTo(self.container, QPoint()))
+
+    def areas_between(self, start, end):
+        drag_rect = QRect(start, end).normalized()
+        if drag_rect.width() < 5 or drag_rect.height() < 5:
+            return {}
+        areas = {}
+        for page_num in range(len(self.page_labels)):
+            image = self.page_image_rect(page_num)
+            selected = drag_rect.intersected(image)
+            if selected.isEmpty():
+                continue
+            local = selected.translated(-image.topLeft())
+            areas[page_num] = [fitz.Rect(local.x() / self.scale, local.y() / self.scale,
+                                        (local.x() + local.width()) / self.scale,
+                                        (local.y() + local.height()) / self.scale)]
+        return areas
+
+    def begin_selection(self, point, global_pos):
+        self.drag_start = point
+        self.drag_end = point
+        self.drag_global_pos = global_pos
+        self.refresh_highlights()
+        self.auto_scroll_timer.start()
+
+    def move_selection(self, point, global_pos):
+        if self.drag_start is None:
+            return
+        self.drag_end = point
+        self.drag_global_pos = global_pos
+        preview = self.areas_between(self.drag_start, point)
+        for page_num, label in enumerate(self.page_labels):
+            label.selection_start = None
+            label.selection_end = None
+            if page_num in preview:
+                rect = self.effective_area(page_num, preview[page_num][0])
+                if not rect.is_empty:
+                    image = label._image_rect()
+                    label.selection_start = image.topLeft() + QPoint(round(rect.x0 * self.scale), round(rect.y0 * self.scale))
+                    label.selection_end = image.topLeft() + QPoint(round(rect.x1 * self.scale), round(rect.y1 * self.scale))
+            label.update()
+
+    def auto_scroll_selection(self):
+        if self.drag_start is None or self.drag_global_pos is None:
+            return
+        point = self.viewport().mapFromGlobal(self.drag_global_pos)
+        height = self.viewport().height()
+        delta = min(30, max(2, 32 - point.y())) if point.y() < 32 else 0
+        if delta:
+            delta = -delta
+        elif point.y() > height - 32:
+            delta = min(30, max(2, point.y() - height + 32))
+        if delta:
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.value() + delta)
+            self.move_selection(self.container.mapFromGlobal(self.drag_global_pos), self.drag_global_pos)
+
+    def finish_selection(self, point):
+        if self.drag_start is None:
+            return
+        areas = self.areas_between(self.drag_start, point)
+        self.cancel_selection(refresh=False)
+        if areas:
+            self.selection_areas = areas
+            self.pending_selection_rect = None
+            self.update_selection_data()
+        else:
+            self.refresh_highlights()
+
+    def cancel_selection(self, refresh=True):
+        self.auto_scroll_timer.stop()
+        self.drag_start = None
+        self.drag_end = None
+        self.drag_global_pos = None
+        for label in self.page_labels:
+            label.is_selecting = False
+            label.clear_selection()
+        if refresh:
+            self.refresh_highlights()
+
+    def hideEvent(self, event):
+        self.cancel_selection(refresh=self.drag_start is not None)
+        super().hideEvent(event)
+
+    def effective_area(self, page_num, area):
+        page = self.pdf_doc.load_page(page_num)
+        body = fitz.Rect(page.rect.x0, page.rect.height * self.header_ratio,
+                         page.rect.x1, page.rect.height * (1 - self.footer_ratio))
+        return area & body
+
     def _on_scroll_page_changed(self):
         if not self.page_labels:
             return
@@ -315,8 +497,13 @@ class PDFViewer(QScrollArea):
 
     def load_pdf(self, path):
         try:
-            self.pdf_doc = fitz.open(path)
+            pdf_doc = fitz.open(path)
+            self.clear_all_data()
+            self.pdf_doc = pdf_doc
+            self.set_exclusion_ratios(0, 0, rebuild=False)
             self.reload_pages()
+            if self.parent_tool:
+                self.parent_tool.invalidate_comparison_results()
             return True
         except Exception:
             return False
@@ -403,6 +590,7 @@ class PDFViewer(QScrollArea):
     def reload_pages(self):
         if not self.pdf_doc:
             return
+        self.cancel_selection(refresh=False)
         
         # Hide drop label when PDF is loaded
         if hasattr(self, 'drop_label'):
@@ -435,11 +623,11 @@ class PDFViewer(QScrollArea):
                 continue
             img = self.page_base_pixmaps[i].toImage().copy()
             painter = QPainter(img)
-            if i in self.last_compared_area:
+            if self.drag_start is None and i in self.last_compared_area:
                 for bbox in self.last_compared_area[i]:
                     rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale), int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
                     painter.fillRect(rect, COLOR_AREA)
-            if i in self.word_highlights:
+            if self.drag_start is None and i in self.word_highlights:
                 for bbox, word_id, color in self.word_highlights[i]:
                     if bbox:
                         rect = QRect(int(bbox[0] * self.scale), int(bbox[1] * self.scale), int((bbox[2] - bbox[0]) * self.scale), int((bbox[3] - bbox[1]) * self.scale))
@@ -450,40 +638,66 @@ class PDFViewer(QScrollArea):
             lbl.setPixmap(QPixmap.fromImage(img))
 
     def on_selection_complete(self, page_num, rect):
-        if rect.width() < 5:
+        self.page_labels[page_num].clear_selection()
+        if rect.width() < 5 or rect.height() < 5:
             return
         x0 = rect.x() / self.scale
         y0 = rect.y() / self.scale
         x1 = (rect.x() + rect.width()) / self.scale
         y1 = (rect.y() + rect.height()) / self.scale
         fitz_rect = fitz.Rect(x0, y0, x1, y1)
-        chars, raw_text = self.extract_and_process_text(page_num, rect)
-        self.selection_areas.setdefault(page_num, []).append((fitz_rect, chars, raw_text))
+        self.selection_areas = {page_num: [fitz_rect]}
         self.pending_selection_rect = (page_num, fitz_rect)
+        self.update_selection_data()
+
+    def selection_index_at(self, page_num, point):
+        pdf_point = fitz.Point(point.x() / self.scale, point.y() / self.scale)
+        areas = self.selection_areas.get(page_num, [])
+        return next((index for index in range(len(areas) - 1, -1, -1)
+                     if areas[index].contains(pdf_point)), None)
+
+    def delete_selection_at(self, page_num, point):
+        index = self.selection_index_at(page_num, point)
+        if index is None:
+            return False
+        self.selection_areas.clear()
+        self.pending_selection_rect = None
+        self.update_selection_data()
+        return True
+
+    def update_selection_data(self):
         self.rebuild_selection_data()
         self.last_compared_area = {
-            page: [area for area, _, _ in selections]
-            for page, selections in self.selection_areas.items()
+            page: [effective for area in areas
+                   if not (effective := self.effective_area(page, area)).is_empty]
+            for page, areas in self.selection_areas.items()
         }
-        self.page_labels[page_num].clear_selection()
-        self.refresh_highlights()
+        if self.parent_tool:
+            self.parent_tool.invalidate_comparison_results()
+        else:
+            self.word_highlights.clear()
+            self.diff_pages = []
+            self.diff_index = -1
+            self.refresh_highlights()
 
     def rebuild_selection_data(self):
         self.char_data = []
         raw_texts = []
         word_offset = 0
         for page_num in sorted(self.selection_areas):
-            for _, chars, text in self.selection_areas[page_num]:
-                self.char_data.extend({**char, 'word_id': char['word_id'] + word_offset} for char in chars)
-                word_offset += max((char['word_id'] for char in chars), default=0)
-                if text:
-                    raw_texts.append(text)
+            chars, text = self.extract_selected_text(page_num, self.selection_areas[page_num])
+            self.char_data.extend({**char, 'word_id': char['word_id'] + word_offset} for char in chars)
+            word_offset += max((char['word_id'] for char in chars), default=0)
+            if text:
+                raw_texts.append(text)
         self.raw_text = '\n'.join(raw_texts)
-        if self.pending_selection_rect and self.pending_selection_rect[0] not in self.selection_areas:
-            self.pending_selection_rect = None
+        if self.pending_selection_rect:
+            page_num, rect = self.pending_selection_rect
+            if rect not in self.selection_areas.get(page_num, []):
+                self.pending_selection_rect = None
         if not self.pending_selection_rect and self.selection_areas:
             page_num = max(self.selection_areas)
-            self.pending_selection_rect = (page_num, self.selection_areas[page_num][-1][0])
+            self.pending_selection_rect = (page_num, self.selection_areas[page_num][-1])
 
     def extract_and_process_text(self, page_num, rect):
         x0 = rect.x() / self.scale
@@ -491,10 +705,19 @@ class PDFViewer(QScrollArea):
         x1 = (rect.x() + rect.width()) / self.scale
         y1 = (rect.y() + rect.height()) / self.scale
         fitz_rect = fitz.Rect(x0, y0, x1, y1)
+        return self.extract_selected_text(page_num, [fitz_rect])
+
+    def extract_selected_text(self, page_num, areas):
         page = self.pdf_doc.load_page(page_num)
-        raw_dict = page.get_text('rawdict', clip=fitz_rect)
-        all_raw_chars = collect_raw_chars(raw_dict, page_num)
-        return normalize_raw_chars(all_raw_chars)
+        raw_chars = collect_raw_chars(page.get_text('rawdict'), page_num)
+        effective_areas = [self.effective_area(page_num, area) for area in areas]
+        selected_chars = []
+        for char in raw_chars:
+            x0, y0, x1, y1 = char['bbox']
+            center = fitz.Point((x0 + x1) / 2, (y0 + y1) / 2)
+            if any(not area.is_empty and area.contains(center) for area in effective_areas):
+                selected_chars.append(char)
+        return normalize_raw_chars(selected_chars)
 
     def _on_page_return_pressed(self):
         self._on_goto_page()
@@ -610,6 +833,7 @@ class PDFViewer(QScrollArea):
                 pass
 
     def clear_all_data(self):
+        self.cancel_selection(refresh=False)
         self.word_highlights.clear()
         self.last_compared_area.clear()
         self.selection_areas.clear()
@@ -827,6 +1051,18 @@ class PdfCompareWidget(QWidget):
             # Re-enable workspace
             self.workspace.setEnabled(True)
 
+    def invalidate_comparison_results(self):
+        self.last_s1_norm = ''
+        self.last_s2_norm = ''
+        self.last_s1_raw = ''
+        self.last_s2_raw = ''
+        self.diff_list.clear()
+        for viewer in (self.viewer1, self.viewer2):
+            viewer.word_highlights.clear()
+            viewer.diff_pages = []
+            viewer.diff_index = -1
+            viewer.refresh_highlights()
+
     def request_comparison(self):
         if not self.viewer1.char_data or not self.viewer2.char_data:
             QMessageBox.warning(self, '경고', '양쪽 비교 영역을 먼저 드래그해주세요.')
@@ -964,8 +1200,9 @@ class PdfCompareWidget(QWidget):
         for viewer in [self.viewer1, self.viewer2]:
             viewer.word_highlights.clear()
             viewer.last_compared_area = {
-                page: [rect for rect, _, _ in selections]
-                for page, selections in viewer.selection_areas.items()
+                page: [effective for area in areas
+                       if not (effective := viewer.effective_area(page, area)).is_empty]
+                for page, areas in viewer.selection_areas.items()
             }
         
         # 로딩 오버레이 표시
