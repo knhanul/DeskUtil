@@ -6,8 +6,11 @@ PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입�
 
 | 기능 | 메뉴명 | 설명 |
 | --- | --- | --- |
-| PDF 지정 영역 비교 | 📄 PDF 지정 영역 비교 | 두 PDF에서 사용자가 지정한 영역(AREA)을 추출해 정규화 후 문자열 단위로 정밀 비교 |
-| PDF 전체 비교 | 📄 PDF 전체 비교 | 페이지 단위 전체 비교. 헤더/푸터 영역을 드래그로 제외 영역으로 설정 가능 |
+| PDF 지정 영역 비교 | 📄 영역지정비교 | 두 PDF에서 사용자가 지정한 영역(AREA)을 추출해 정규화 후 문자열 단위로 정밀 비교 |
+| PDF 전체 비교 | 📄 전체비교 | 페이지 단위 전체 비교. 헤더/푸터 영역을 드래그로 제외 영역으로 설정 가능 |
+| PDF 분할 | ✂️ PDF 분할 | 페이지 범위, N페이지마다, 또는 각 페이지를 개별 파일로 분할 |
+| PDF 병합 | 📎 PDF 병합 | 여러 PDF를 순서대로 하나로 병합 (드래그로 순서 변경 가능) |
+| 페이지 편집 | 📑 페이지 편집 | 페이지 추출 / 삭제 / 재정렬 후 새 파일로 저장 |
 
 ### 비교 조건
 
@@ -49,7 +52,10 @@ PdfDiff/
 │   │   └── loading_dialog.py    # 로딩 다이얼로그
 │   └── tools/
 │       ├── pdf_compare.py           # PDF 지정 영역 비교
-│       └── pdf_header_footer_compare.py  # PDF 전체 비교
+│       ├── pdf_header_footer_compare.py  # PDF 전체 비교
+│       ├── pdf_split.py             # PDF 분할
+│       ├── pdf_merge.py             # PDF 병합
+│       └── pdf_page_editor.py       # 페이지 추출/삭제/재정렬
 ├── configs/
 │   ├── settings.py              # 타겟 로딩 로직 (환경변수/실행파일명에서 타겟 추출)
 │   ├── target_posid.py          # posid 타겟 설정
@@ -72,11 +78,11 @@ PdfDiff/
 2. 실행 파일 이름에서 추출 (예: `nunidesk_posid.exe` → `posid`)
 3. 기본값: `posid`
 
-| 타겟 | 앱 이름 | 회사명 | 테마색 | 아이콘 |
-| --- | --- | --- | --- | --- |
-| `posid` | Posid 데스크 | 우체국금융개발원 | `#004b93` | `posid_icon.ico` |
-| `post` | nunidesk | 우정정보관리원 | `#6b46c1` | `post_icon.ico` |
-| `nuni` | nunidesk | Nuni | `#0f766e` | `nuni_icon.ico` |
+| 타겟 | 앱 이름 | 회사명 | 테마색 |
+| --- | --- | --- | --- |
+| `posid` | Posid 데스크 | 우체국금융개발원 | `#004b93` |
+| `post` | nunidesk | 우정정보관리원 | `#6b46c1` |
+| `nuni` | nunidesk | Nuni | `#0f766e` |
 
 ## 요구사항
 
