@@ -284,16 +284,6 @@ class MdiMainWindow(QMainWindow):
                 'enabled': True,
                 'icon': '📄',
             },
-            {
-                'key': 'document_search',
-                'menu_title': '문서찾기',
-                'window_title': '문서 찾기',
-                'module_path': 'app.tools.document_search_ui',
-                'class_name': 'DocumentSearchWidget',
-                'singleton': True,
-                'enabled': True,
-                'icon': '🔍',
-            },
         ]
         self.tool_definitions = tool_definitions
 

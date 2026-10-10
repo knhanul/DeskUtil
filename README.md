@@ -1,6 +1,6 @@
 # NuniDesk (DeskUtil)
 
-PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, PDF 생성, 문서 검색 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
+PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, PDF 생성 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
 
 ## 주요 기능
 
@@ -8,10 +8,6 @@ PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입�
 | --- | --- | --- |
 | PDF 지정 영역 비교 | 📄 PDF 지정 영역 비교 | 두 PDF에서 사용자가 지정한 영역(AREA)을 추출해 정규화 후 문자열 단위로 정밀 비교 |
 | PDF 전체 비교 | 📄 PDF 전체 비교 | 페이지 단위 전체 비교. 헤더/푸터 영역을 드래그로 제외 영역으로 설정 가능 |
-| 문서 찾기 | 🔍 문서 찾기 | 디렉터리를 색인화하여 PDF/DOCX/HWP/HWPX/XLSX 등의 본문 텍스트를 전문 검색(FTS5) |
-
-### 지원 문서 포맷 (문서 찾기)
-`.txt`, `.md`, `.py`, `.js`, `.html`, `.css`, `.json`, `.xml`, `.pdf`, `.docx`, `.doc`, `.hwp`, `.hwpx`, `.cell`, `.xlsx`, `.xls`
 
 ## 프로젝트 구조
 
@@ -30,33 +26,20 @@ DeskUtil/
 │   │   └── loading_dialog.py    # 로딩 다이얼로그
 │   └── tools/
 │       ├── pdf_compare.py           # PDF 지정 영역 비교
-│       ├── pdf_header_footer_compare.py  # PDF 전체 비교
-│       ├── document_search_ui.py    # 문서 찾기 UI
-│       └── integrated_previewer.py  # 통합 문서 미리보기
+│       └── pdf_header_footer_compare.py  # PDF 전체 비교
 ├── configs/
 │   ├── settings.py              # 타겟 로딩 로직 (환경변수/실행파일명에서 타겟 추출)
 │   ├── target_posid.py          # posid 타겟 설정
 │   ├── target_post.py           # post 타겟 설정
 │   ├── target_nuni.py           # nuni 타겟 설정
 │   └── target_qamate.py         # qamate 타겟 설정(빌드 대상 아님)
-├── doc_search/                  # 문서 검색 엔진
-│   ├── scanner.py               # 파일 스캐너
-│   ├── indexer.py               # 색인 관리자
-│   ├── search.py                # 검색 API
-│   ├── database/fts5_db.py      # SQLite FTS5 백엔드
-│   └── extractors/              # 포맷별 텍스트 추출기
-│       ├── pdf_extractor.py
-│       ├── docx_extractor.py
-│       ├── hwp_extractor.py
-│       ├── xlsx_extractor.py
-│       ├── cell_extractor.py
-│       └── text_extractor.py
+├── pdf_generator/               # PDF 생성 (문서/이미지 → PDF 변환)
 ├── assets/                      # 타겟별 아이콘/로고
 │   ├── posid/
 │   ├── post/
 │   ├── nuni/
 │   └── qamate/
-└── doc_search.db                # 색인 DB (실행 시 생성)
+└── tests/                       # 단위 테스트
 ```
 
 ## 빌드 타겟
@@ -78,7 +61,7 @@ DeskUtil/
 - Windows 10/11
 - Python 3.12+
 - 의존성: `requirements.txt` 참조
-  - PyQt6, PyMuPDF, python-docx, openpyxl, pandas, pyxlsb, pyhwpx, olefile, Pillow
+  - PyQt6, PyMuPDF, Pillow
   - 빌드 시 추가: `pyinstaller`
 
 ## 개발 환경 설정

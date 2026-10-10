@@ -148,8 +148,8 @@ class GeneratorTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         window = MdiMainWindow()
         self.assertEqual([tool['menu_title'] for tool in window.tool_definitions],
-                         ['영역지정비교', '전체비교', 'PDF 생성', '문서찾기'])
-        for key in ('pdf_compare', 'pdf_hf_compare', 'pdf_generator', 'document_search'):
+                         ['영역지정비교', '전체비교', 'PDF 생성'])
+        for key in ('pdf_compare', 'pdf_hf_compare', 'pdf_generator'):
             window.open_tool(key)
             self.assertEqual(window.current_tool_key, key)
         window.close()
