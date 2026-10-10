@@ -6,7 +6,7 @@ COLOR_SECONDARY = '#FF6D00'
 COLOR_SIDEBAR_BG = '#FFF4E6'
 COLOR_HEADER_BG = '#FFFFFF'
 COLOR_MDI_BG = '#F2F2F7'
-COLOR_WORKSPACE_DARK = '#1C1C1E'
+COLOR_WORKSPACE_DARK = '#2A1F18'  # warm dark brown for PDF viewers
 COLOR_TEXT_PRIMARY = '#1C1C1E'
 COLOR_TEXT_SECONDARY = '#3C3C43'
 COLOR_TEXT_MUTED = '#8E8E93'
@@ -361,7 +361,14 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
     background-color: rgba(255, 59, 48, 0.15);
 }}
 
-/* ── PDF Toolbar ── */
+/* Calm orange for header/footer exclusion bars */
+QLabel#hfInstruction {{
+    color: #FFFFFF;
+    background-color: #C2410C;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 13px;
+}}
 #pdfToolbar {{
     background-color: rgba(248, 248, 250, 0.95);
     border-bottom: 0.5px solid {_IOS_SEPARATOR};

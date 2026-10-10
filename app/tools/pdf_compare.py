@@ -240,29 +240,29 @@ class PDFViewer(QScrollArea):
         # Zoom controls - enlarged for visibility
         self.zoom_in_btn = QPushButton('🔍+')
         self.zoom_in_btn.setObjectName('toolbarBtn')
-        self.zoom_in_btn.setFixedSize(50, 34)
-        self.zoom_in_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
+        self.zoom_in_btn.setFixedSize(36, 32)
+        self.zoom_in_btn.setStyleSheet('font-size: 13px; padding: 0px; margin: 0px;')
         self.zoom_in_btn.setToolTip('확대')
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         
         self.zoom_out_btn = QPushButton('🔍-')
         self.zoom_out_btn.setObjectName('toolbarBtn')
-        self.zoom_out_btn.setFixedSize(50, 34)
-        self.zoom_out_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
+        self.zoom_out_btn.setFixedSize(36, 32)
+        self.zoom_out_btn.setStyleSheet('font-size: 13px; padding: 0px; margin: 0px;')
         self.zoom_out_btn.setToolTip('축소')
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         
-        self.fit_width_btn = QPushButton('너비맞춤')
+        self.fit_width_btn = QPushButton('↔')
         self.fit_width_btn.setObjectName('toolbarBtn')
-        self.fit_width_btn.setFixedHeight(34)
-        self.fit_width_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
+        self.fit_width_btn.setFixedSize(36, 32)
+        self.fit_width_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
         self.fit_width_btn.setToolTip('너비에 맞춤')
         self.fit_width_btn.clicked.connect(self.fit_to_width)
         
-        self.fit_page_btn = QPushButton('페이지맞춤')
+        self.fit_page_btn = QPushButton('📄')
         self.fit_page_btn.setObjectName('toolbarBtn')
-        self.fit_page_btn.setFixedHeight(34)
-        self.fit_page_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
+        self.fit_page_btn.setFixedSize(36, 32)
+        self.fit_page_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
         self.fit_page_btn.setToolTip('페이지에 맞춤')
         self.fit_page_btn.clicked.connect(self.fit_to_page)
         
@@ -287,10 +287,10 @@ class PDFViewer(QScrollArea):
         self.page_total_label.setObjectName('toolbarLabel')
         self.page_total_label.setFixedWidth(50)
         
-        self.go_page_btn = QPushButton('이동')
+        self.go_page_btn = QPushButton('→')
         self.go_page_btn.setObjectName('toolbarBtn')
-        self.go_page_btn.setFixedSize(40, 30)
-        self.go_page_btn.setStyleSheet('font-size: 12px; padding: 0px; margin: 0px;')
+        self.go_page_btn.setFixedSize(32, 30)
+        self.go_page_btn.setStyleSheet('font-size: 14px; padding: 0px; margin: 0px;')
         self.go_page_btn.setToolTip('해당 페이지로 이동')
         self.go_page_btn.clicked.connect(self._on_goto_page)
         
@@ -514,9 +514,9 @@ class PDFViewer(QScrollArea):
         if not self.parent_tool:
             return
         if self == self.parent_tool.viewer1:
-            self.parent_tool.lbl_name1.setText(f"<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
+            self.parent_tool.lbl_name1.setText(f"<b style='color:#C2410C; font-size:15px; font-weight:600;'>[PDF 1] 📄 {os.path.basename(pdf_path)}</b>")
         elif self == self.parent_tool.viewer2:
-            self.parent_tool.lbl_name2.setText(f"<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
+            self.parent_tool.lbl_name2.setText(f"<b style='color:#C2410C; font-size:15px; font-weight:600;'>[PDF 2] 📄 {os.path.basename(pdf_path)}</b>")
 
     def open_pdf_via_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, 'PDF 파일 선택', '', 'PDF Files (*.pdf)')
@@ -911,7 +911,7 @@ class PdfCompareWidget(QWidget):
         self.viewer1.set_parent_tool(self)  # Set parent reference
         
         # Add PDF name label at top with minimal margin
-        self.lbl_name1 = QLabel("<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 1]</b>")
+        self.lbl_name1 = QLabel("<b style='color:#C2410C; font-size:15px; font-weight:600;'>[PDF 1]</b>")
         self.lbl_name1.setContentsMargins(10, 6, 10, 4)
         v1_layout.addWidget(self.lbl_name1)
         
@@ -924,18 +924,15 @@ class PdfCompareWidget(QWidget):
             "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
             "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
         )
+        self.hf_instruction_label1.setObjectName('hfInstruction')
         self.hf_instruction_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hf_instruction_label1.setStyleSheet(
-            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
-            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
-        )
         self.hf_instruction_label1.setContentsMargins(10, 8, 10, 8)
         v1_layout.addWidget(self.hf_instruction_label1)
 
         v1_layout.addWidget(self.viewer1, 1)
         
         # Create PDF name labels
-        self.lbl_name2 = QLabel("<b style='color:#007AFF; font-size:15px; font-weight:600;'>[PDF 2]</b>")
+        self.lbl_name2 = QLabel("<b style='color:#C2410C; font-size:15px; font-weight:600;'>[PDF 2]</b>")
         
         # Bottom controls for PDF 1 (removed - moved to bottom bar)
         workspace_layout.addWidget(v1_panel)
@@ -963,11 +960,8 @@ class PdfCompareWidget(QWidget):
             "<span style='font-size:12px;'>스크롤하여 문서 상단(머릿글)과 하단(바닥글)을 확인한 후<br>"
             "각 영역의 높이를 조정하여 비교 대상에서 제외할 수 있습니다.</span>"
         )
+        self.hf_instruction_label2.setObjectName('hfInstruction')
         self.hf_instruction_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hf_instruction_label2.setStyleSheet(
-            'QLabel { color: #FFFFFF; background-color: rgba(0, 122, 255, 0.6); '
-            'padding: 10px 15px; border-radius: 8px; font-size: 13px; }'
-        )
         self.hf_instruction_label2.setContentsMargins(10, 8, 10, 8)
         v2_layout.addWidget(self.hf_instruction_label2)
 
@@ -1066,6 +1060,13 @@ class PdfCompareWidget(QWidget):
         bottom_action_layout.addWidget(self.btn_reset_all)
 
         layout.addWidget(bottom_action_bar)
+        self.bottom_action_bar = bottom_action_bar
+
+        # Store buttons for focus mode
+        self.focus_buttons = [
+            self.btn_view_text, self.btn_diff_list,
+            self.btn_reset_page, self.btn_reset_all
+        ]
 
         self.last_s1_norm = ''
         self.last_s2_norm = ''
@@ -1123,6 +1124,28 @@ class PdfCompareWidget(QWidget):
             viewer.diff_pages = []
             viewer.diff_index = -1
             viewer.refresh_highlights()
+
+    def set_focus_mode(self, enabled: bool):
+        """집중모드: 하단 바 축소, 보조 버튼 숨김"""
+        if enabled:
+            self.bottom_action_bar.setFixedHeight(48)
+            self.bottom_action_bar.setStyleSheet('QFrame#actionBar { min-height: 48px; padding: 2px 0px; }')
+            for btn in self.focus_buttons:
+                btn.hide()
+            self.btn_compare.setFixedHeight(36)
+            self.btn_compare.setMinimumWidth(120)
+            # Optionally hide instruction labels for more space
+            self.hf_instruction_label1.hide()
+            self.hf_instruction_label2.hide()
+        else:
+            self.bottom_action_bar.setFixedHeight(0)  # reset to natural
+            self.bottom_action_bar.setStyleSheet('')
+            for btn in self.focus_buttons:
+                btn.show()
+            self.btn_compare.setFixedHeight(42)
+            self.btn_compare.setMinimumWidth(150)
+            self.hf_instruction_label1.show()
+            self.hf_instruction_label2.show()
 
     def request_comparison(self):
         if not self.viewer1.char_data or not self.viewer2.char_data:
@@ -1690,7 +1713,7 @@ class PdfCompareWidget(QWidget):
             f"<b>총 {total}개 차이점</b> | "
             f"<span style='color:#FF9500;'>삭제: {delete_count}</span> | "
             f"<span style='color:#34C759;'>추가: {insert_count}</span> | "
-            f"<span style='color:#007AFF;'>변경: {replace_count}</span>"
+            f"<span style='color:#C2410C;'>변경: {replace_count}</span>"
             f"</div>"
         )
         layout.addWidget(summary)

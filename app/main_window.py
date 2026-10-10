@@ -26,9 +26,9 @@ class MdiMainWindow(QMainWindow):
         self.main_layout.setSpacing(0)
         self.setCentralWidget(self.main_widget)
 
+        self.focus_mode = False
         self.sidebar_expanded_width = 220
-        self.sidebar_collapsed_width = 68
-        self.sidebar_width = self.sidebar_expanded_width
+        self.sidebar_collapsed_width = 0  # fully hide in focus
         self.sidebar_buttons = []
         self.tool_definitions = []
         self.current_tool_widget = None
@@ -157,18 +157,26 @@ class MdiMainWindow(QMainWindow):
         return header
 
     def toggle_sidebar(self):
-        if self.sidebar_width == self.sidebar_expanded_width:
-            self.sidebar_width = self.sidebar_collapsed_width
+        self.focus_mode = not self.focus_mode
+        if self.focus_mode:
+            # Enter focus mode: hide sidebar completely
+            self.sidebar_width = 0
             self.sidebar_animation.stop()
             self.sidebar_animation.setStartValue(self.sidebar.width())
-            self.sidebar_animation.setEndValue(self.sidebar_collapsed_width)
+            self.sidebar_animation.setEndValue(0)
             self.sidebar_animation.start()
+            # Notify current tool
+            if self.current_tool_widget and hasattr(self.current_tool_widget, 'set_focus_mode'):
+                self.current_tool_widget.set_focus_mode(True)
         else:
+            # Exit focus mode
             self.sidebar_width = self.sidebar_expanded_width
             self.sidebar_animation.stop()
             self.sidebar_animation.setStartValue(self.sidebar.width())
             self.sidebar_animation.setEndValue(self.sidebar_expanded_width)
             self.sidebar_animation.start()
+            if self.current_tool_widget and hasattr(self.current_tool_widget, 'set_focus_mode'):
+                self.current_tool_widget.set_focus_mode(False)
 
     def sync_sidebar_width(self, value):
         width = int(value)
