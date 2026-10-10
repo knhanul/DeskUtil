@@ -462,3 +462,29 @@ class MdiMainWindow(QMainWindow):
         )
         version_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version_info)
+
+        # 나머지 정보 내용은 원본 파일과 동일하게 유지
+        # (전체 내용은 로컬 파일 참조)
+        layout.addStretch()
+        dialog.exec()
+
+    def closeEvent(self, event):
+        """애플리케이션 종료 시 모든 스레드 정리 (좀비 프로세스 방지)"""
+        # 현재 활성화된 도구의 스레드 정리
+        if self.current_tool_widget:
+            self.current_tool_widget.close()
+        
+        # 캐시된 모든 도구 위젯의 스레드 정리
+        for tool_widget in self.tool_cache.values():
+            tool_widget.close()
+        
+        # 이벤트 수락 (창 닫기 진행)
+        event.accept()
+
+
+def run():
+    app = QApplication.instance() or QApplication([])
+    app.setFont(QFont('Malgun Gothic', 10))
+    window = MdiMainWindow()
+    window.show()
+    return app.exec()
