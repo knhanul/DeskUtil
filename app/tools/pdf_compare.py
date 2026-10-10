@@ -1020,6 +1020,11 @@ class PdfCompareWidget(QWidget):
         bottom_action_layout.setContentsMargins(12, 8, 12, 8)
         bottom_action_layout.setSpacing(10)
 
+        self.btn_switch_tool = QPushButton()
+        self.btn_switch_tool.setObjectName('secondaryBtn')
+        self.btn_switch_tool.setFixedSize(40, 40)
+        bottom_action_layout.addWidget(self.btn_switch_tool)
+
         # Extract data button (secondary) - 가장 왼쪽
         self.btn_view_text = QPushButton('📋  추출 데이터 확인')
         self.btn_view_text.setObjectName('secondaryBtn')
@@ -1059,14 +1064,14 @@ class PdfCompareWidget(QWidget):
         self.btn_reset_all.setMinimumWidth(120)
         bottom_action_layout.addWidget(self.btn_reset_all)
 
+        self.btn_focus_mode = QPushButton()
+        self.btn_focus_mode.setObjectName('secondaryBtn')
+        self.btn_focus_mode.setFixedSize(40, 40)
+        self.btn_focus_mode.setCheckable(True)
+        bottom_action_layout.addWidget(self.btn_focus_mode)
+
         layout.addWidget(bottom_action_bar)
         self.bottom_action_bar = bottom_action_bar
-
-        # Store buttons for focus mode
-        self.focus_buttons = [
-            self.btn_view_text, self.btn_diff_list,
-            self.btn_reset_page, self.btn_reset_all
-        ]
 
         self.last_s1_norm = ''
         self.last_s2_norm = ''
@@ -1124,28 +1129,6 @@ class PdfCompareWidget(QWidget):
             viewer.diff_pages = []
             viewer.diff_index = -1
             viewer.refresh_highlights()
-
-    def set_focus_mode(self, enabled: bool):
-        """집중모드: 하단 바 축소, 보조 버튼 숨김"""
-        if enabled:
-            self.bottom_action_bar.setFixedHeight(48)
-            self.bottom_action_bar.setStyleSheet('QFrame#actionBar { min-height: 48px; padding: 2px 0px; }')
-            for btn in self.focus_buttons:
-                btn.hide()
-            self.btn_compare.setFixedHeight(36)
-            self.btn_compare.setMinimumWidth(120)
-            # Optionally hide instruction labels for more space
-            self.hf_instruction_label1.hide()
-            self.hf_instruction_label2.hide()
-        else:
-            self.bottom_action_bar.setFixedHeight(0)  # reset to natural
-            self.bottom_action_bar.setStyleSheet('')
-            for btn in self.focus_buttons:
-                btn.show()
-            self.btn_compare.setFixedHeight(42)
-            self.btn_compare.setMinimumWidth(150)
-            self.hf_instruction_label1.show()
-            self.hf_instruction_label2.show()
 
     def request_comparison(self):
         if not self.viewer1.char_data or not self.viewer2.char_data:

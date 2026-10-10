@@ -38,6 +38,112 @@ class MultiPageSelectionTests(unittest.TestCase):
     def select(self, viewer, page):
         viewer.on_selection_complete(page, QRect(30, 55, 260, 110))
 
+    def test_bottom_focus_button_toggles_modes_without_changing_actions(self):
+        from app.main_window import MdiMainWindow
+
+        window = MdiMainWindow()
+        self.addCleanup(window.close)
+        window.show()
+        self.assertFalse(hasattr(window, 'hamburger_btn'))
+        self.assertFalse(hasattr(window, 'focus_exit_btn'))
+        for key in ('pdf_compare', 'pdf_hf_compare', 'pdf_compare'):
+            window.open_tool(key)
+            tool = window.current_tool_widget
+            layout = tool.bottom_action_bar.layout()
+            button = tool.btn_focus_mode
+            self.assertIs(layout.itemAt(layout.count() - 1).widget(), button)
+            actions = [layout.itemAt(i).widget() for i in range(layout.count() - 1)
+                       if layout.itemAt(i).widget() is not None]
+            before = [(action.isVisible(), action.minimumSize(), action.maximumSize())
+                      for action in actions]
+            for focused in (True, False):
+                button.click()
+                self.assertEqual(window.focus_mode, focused)
+                self.assertEqual(window.header_bar.isVisible(), not focused)
+                self.assertEqual(button.isChecked(), focused)
+                self.assertTrue(button.isVisible())
+                self.assertFalse(button.icon().isNull())
+                self.assertEqual(button.toolTip(), '일반 모드로 전환' if focused else '집중 모드로 전환')
+                self.assertTrue(all(action.isVisible() for action in actions))
+                self.assertEqual(tool.lbl_name1.isVisible(), not focused)
+                self.assertEqual(tool.lbl_name2.isVisible(), not focused)
+                self.assertTrue(tool.viewer1.toolbar.isVisible())
+                self.assertTrue(tool.viewer2.toolbar.isVisible())
+                if focused:
+                    self.assertEqual(tool.btn_compare.height(), 28)
+                else:
+                    self.assertEqual(before, [(action.isVisible(), action.minimumSize(), action.maximumSize())
+                                              for action in actions])
+                self.app.processEvents()
+
+    def test_bottom_tool_switch_preserves_focus_and_scroll_toggle(self):
+        from app.main_window import MdiMainWindow
+        from app.tools.pdf_header_footer_compare import SyncScrollToggle
+
+        window = MdiMainWindow()
+        self.addCleanup(window.close)
+        window.show()
+        area = window.current_tool_widget
+        for focused in (False, True):
+            if window.focus_mode != focused:
+                window.current_tool_widget.btn_focus_mode.click()
+            area.btn_switch_tool.click()
+            self.assertEqual(window.current_tool_key, 'pdf_hf_compare')
+            full = window.current_tool_widget
+            self.assertIsInstance(full.sync_scroll_cb, SyncScrollToggle)
+            for tool in (area, full):
+                self.assertIs(tool.bottom_action_bar.layout().itemAt(0).widget(), tool.btn_switch_tool)
+                self.assertFalse(tool.btn_switch_tool.icon().isNull())
+                self.assertTrue(tool.btn_switch_tool.isEnabled())
+            full.sync_scroll_cb.click()
+            self.assertTrue(full.sync_scroll_enabled)
+            full.sync_scroll_cb.click()
+            self.assertFalse(full.sync_scroll_enabled)
+            full.btn_switch_tool.click()
+            self.assertEqual(window.current_tool_key, 'pdf_compare')
+            self.assertIs(window.current_tool_widget, area)
+            self.assertEqual(window.focus_mode, focused)
+            self.assertEqual(window.header_bar.isVisible(), not focused)
+            self.app.processEvents()
+
+    def test_focus_compact_layout_restores_after_switching_and_loading_pdf(self):
+        from app.main_window import MdiMainWindow
+
+        window = MdiMainWindow()
+        self.addCleanup(window.close)
+        window.show()
+        self.app.processEvents()
+        area = window.current_tool_widget
+        normal_height = area.bottom_action_bar.height()
+        normal_button_height = area.btn_compare.height()
+        normal_margins = area.layout().contentsMargins()
+        area.btn_focus_mode.click()
+        self.app.processEvents()
+        self.assertLess(area.bottom_action_bar.height(), normal_height)
+        self.assertLessEqual(area.bottom_action_bar.height(), 36)
+        area.btn_switch_tool.click()
+        self.app.processEvents()
+        full = window.current_tool_widget
+        self.assertTrue(full.lbl_name1.isHidden())
+        self.assertLessEqual(full.bottom_action_bar.height(), 36)
+        path = self.make_pdf('focus.pdf', ['Focus content'])
+        for tool in (area, full):
+            self.assertTrue(tool.viewer1.load_pdf(path))
+            self.addCleanup(tool.viewer1.pdf_doc.close)
+            tool.viewer1.update_loaded_pdf_label(path)
+            self.assertIn('focus.pdf', tool.lbl_name1.text())
+            self.assertTrue(tool.lbl_name1.isHidden())
+        full.btn_focus_mode.click()
+        self.app.processEvents()
+        self.assertTrue(full.lbl_name1.isVisible())
+        full.btn_switch_tool.click()
+        self.app.processEvents()
+        self.assertEqual(area.bottom_action_bar.height(), normal_height)
+        self.assertEqual(area.layout().contentsMargins(), normal_margins)
+        self.assertTrue(area.lbl_name1.isVisible())
+        self.assertEqual(area.btn_compare.height(), normal_button_height)
+        self.assertEqual(area.btn_focus_mode.width(), 40)
+
     def test_shared_normalization_preserves_filtering_and_word_ids(self):
         characters = [('A', 10), ('A', 10.5), (' ', 14), ('B', 18),
                       ('?', 22), ('\t', 26), ('C', 30), ('e\u0301', 34)]

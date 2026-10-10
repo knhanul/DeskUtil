@@ -3,7 +3,7 @@ import importlib
  
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon, QPixmap
-from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QStyle, QVBoxLayout, QWidget
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
@@ -29,6 +29,7 @@ class MdiMainWindow(QMainWindow):
         self.focus_mode = False
         self.sidebar_expanded_width = 220
         self.sidebar_collapsed_width = 0  # fully hide in focus
+        self.sidebar_width = self.sidebar_expanded_width
         self.sidebar_buttons = []
         self.tool_definitions = []
         self.current_tool_widget = None
@@ -109,7 +110,7 @@ class MdiMainWindow(QMainWindow):
         self.tool_container_layout = QVBoxLayout(self.tool_container)
         self.tool_container_layout.setContentsMargins(0, 0, 0, 0)
         right_panel_layout.addWidget(self.tool_container, 1)
-        
+
         return right_panel
 
     def create_header_bar(self):
@@ -118,11 +119,6 @@ class MdiMainWindow(QMainWindow):
         header.setFixedHeight(60)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(16, 0, 16, 0)
-        self.hamburger_btn = QPushButton('☰')
-        self.hamburger_btn.setObjectName('hamburgerBtn')
-        self.hamburger_btn.clicked.connect(self.toggle_sidebar)
-        header_layout.addWidget(self.hamburger_btn)
-        header_layout.addSpacing(16)
 
         self.header_title = QLabel(APP_NAME)
         self.header_title.setObjectName('headerTitle')
@@ -159,15 +155,13 @@ class MdiMainWindow(QMainWindow):
     def toggle_sidebar(self):
         self.focus_mode = not self.focus_mode
         if self.focus_mode:
-            # Enter focus mode: hide sidebar completely
+            # Enter focus mode: hide sidebar and header bar completely
             self.sidebar_width = 0
             self.sidebar_animation.stop()
             self.sidebar_animation.setStartValue(self.sidebar.width())
             self.sidebar_animation.setEndValue(0)
             self.sidebar_animation.start()
-            # Notify current tool
-            if self.current_tool_widget and hasattr(self.current_tool_widget, 'set_focus_mode'):
-                self.current_tool_widget.set_focus_mode(True)
+            self.header_bar.hide()
         else:
             # Exit focus mode
             self.sidebar_width = self.sidebar_expanded_width
@@ -175,8 +169,63 @@ class MdiMainWindow(QMainWindow):
             self.sidebar_animation.setStartValue(self.sidebar.width())
             self.sidebar_animation.setEndValue(self.sidebar_expanded_width)
             self.sidebar_animation.start()
-            if self.current_tool_widget and hasattr(self.current_tool_widget, 'set_focus_mode'):
-                self.current_tool_widget.set_focus_mode(False)
+            self.header_bar.show()
+        for tool in self.tool_cache.values():
+            self.update_focus_button(tool)
+
+    def update_focus_button(self, tool):
+        button = tool.btn_focus_mode
+        label = '일반 모드로 전환' if self.focus_mode else '집중 모드로 전환'
+        icon = QStyle.StandardPixmap.SP_TitleBarNormalButton if self.focus_mode else QStyle.StandardPixmap.SP_TitleBarMaxButton
+        button.setIcon(button.style().standardIcon(icon))
+        button.setChecked(self.focus_mode)
+        button.setToolTip(label)
+        button.setAccessibleName(label)
+        self.update_focus_layout(tool)
+
+    def update_focus_layout(self, tool):
+        bar = tool.bottom_action_bar
+        layouts = (tool.layout(), bar.layout())
+        if not hasattr(tool, '_normal_focus_layout'):
+            tool._normal_focus_layout = {
+                'style': bar.styleSheet(),
+                'minimum_height': bar.minimumHeight(),
+                'layouts': [(layout.contentsMargins(), layout.spacing()) for layout in layouts],
+                'buttons': [(button, button.minimumSize(), button.maximumSize())
+                            for button in bar.findChildren(QPushButton)],
+            }
+        normal = tool._normal_focus_layout
+        tool.lbl_name1.setVisible(not self.focus_mode)
+        tool.lbl_name2.setVisible(not self.focus_mode)
+        if self.focus_mode:
+            bar.setStyleSheet('''
+                QFrame#actionBar { min-height: 0px; padding: 0px; }
+                QFrame#actionBar QPushButton {
+                    min-height: 0px; padding: 0px 6px;
+                    font-size: 12px; border-radius: 5px;
+                }
+            ''')
+            bar.setMinimumHeight(0)
+            margins = normal['layouts'][0][0]
+            layouts[0].setContentsMargins(margins.left(), margins.top(), margins.right(), 2)
+            layouts[0].setSpacing(2)
+            layouts[1].setContentsMargins(6, 2, 6, 2)
+            layouts[1].setSpacing(4)
+            for button, _, _ in normal['buttons']:
+                button.setFixedHeight(28)
+                if button.text():
+                    button.setMinimumWidth(0)
+                else:
+                    button.setFixedWidth(28)
+        else:
+            for layout, (margins, spacing) in zip(layouts, normal['layouts']):
+                layout.setContentsMargins(margins)
+                layout.setSpacing(spacing)
+            for button, minimum, maximum in normal['buttons']:
+                button.setMinimumSize(minimum)
+                button.setMaximumSize(maximum)
+            bar.setMinimumHeight(normal['minimum_height'])
+            bar.setStyleSheet(normal['style'])
 
     def sync_sidebar_width(self, value):
         width = int(value)
@@ -314,8 +363,18 @@ class MdiMainWindow(QMainWindow):
                 module = importlib.import_module(tool_definition['module_path'])
                 factory_class = getattr(module, tool_definition['class_name'])
                 new_tool = factory_class()
+                new_tool.btn_focus_mode.clicked.connect(self.toggle_sidebar)
+                target_key = 'pdf_hf_compare' if tool_key == 'pdf_compare' else 'pdf_compare'
+                target_title = self.get_tool_definition(target_key)['menu_title']
+                button = new_tool.btn_switch_tool
+                button.setIcon(button.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+                button.setToolTip(f'{target_title}로 전환')
+                button.setAccessibleName(f'{target_title}로 전환')
+                button.clicked.connect(partial(self.open_tool, target_key))
                 self.tool_cache[tool_key] = new_tool
                 self.tool_container_layout.addWidget(new_tool)
+                new_tool.ensurePolished()
+                self.update_focus_button(new_tool)
             except Exception as e:
                 QMessageBox.warning(self, 'Error', f'Failed to load tool: {e}')
                 return

@@ -2,18 +2,43 @@ import os
 import re
 
 import pymupdf
-from PyQt6.QtCore import QRect, QTimer, Qt
+from PyQt6.QtCore import QRect, QRectF, QTimer, Qt
 from PyQt6.QtGui import QColor, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QStyle, QStyleOptionButton, QVBoxLayout, QWidget,
 )
 
 from app.common.resources import get_timer_gif_path
-from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
+from app.common.styles import COLOR_PRIMARY, COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AREA, MODERN_QSS
 from app.common.pdf_search_helper import PDFSearchHelper
 from app.common.pdf_compare_worker import CompareThreadManager
 from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
+
+
+class SyncScrollToggle(QCheckBox):
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet('QCheckBox::indicator { width: 36px; height: 20px; border: none; background: transparent; image: none; }')
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        track = QRectF(self.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, option, self))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.isEnabled():
+            painter.setOpacity(0.4)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(COLOR_PRIMARY if self.isChecked() else '#A0A0A0'))
+        painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+        diameter = track.height() - 4
+        x = track.right() - diameter - 2 if self.isChecked() else track.left() + 2
+        painter.setBrush(QColor('white'))
+        painter.drawEllipse(QRectF(x, track.top() + 2, diameter, diameter))
+        painter.end()
 
 
 # ──────────────────────────────────────────────────────────
@@ -773,8 +798,13 @@ class HFCompareWidget(QWidget):
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(10)
 
+        self.btn_switch_tool = QPushButton()
+        self.btn_switch_tool.setObjectName('secondaryBtn')
+        self.btn_switch_tool.setFixedSize(40, 40)
+        bl.addWidget(self.btn_switch_tool)
+
         # 동시 스크롤 체크박스
-        self.sync_scroll_cb = QCheckBox('동시 스크롤')
+        self.sync_scroll_cb = SyncScrollToggle('동시 스크롤')
         self.sync_scroll_cb.setObjectName('actionCheckBox')
         self.sync_scroll_cb.setChecked(False)
         self.sync_scroll_cb.toggled.connect(self.toggle_sync_scroll)
@@ -814,12 +844,14 @@ class HFCompareWidget(QWidget):
         self.btn_reset.clicked.connect(self.request_reset)
         bl.addWidget(self.btn_reset)
 
+        self.btn_focus_mode = QPushButton()
+        self.btn_focus_mode.setObjectName('secondaryBtn')
+        self.btn_focus_mode.setFixedSize(40, 40)
+        self.btn_focus_mode.setCheckable(True)
+        bl.addWidget(self.btn_focus_mode)
+
         root.addWidget(bar)
         self.bottom_action_bar = bar
-        self.focus_buttons = [
-            self.sync_scroll_cb, self.btn_diff_list,
-            self.btn_reset_page, self.btn_reset
-        ]
 
         # 스크롤 동기화
         self.viewer1.verticalScrollBar().valueChanged.connect(self._sync1)
@@ -962,31 +994,6 @@ class HFCompareWidget(QWidget):
             viewer.last_compared_area[page_num].append(bbox)
 
     # ─── 비교 요청 ───
-    def set_focus_mode(self, enabled: bool):
-        """집중모드: 하단 바 축소, 보조 버튼 숨김"""
-        if enabled:
-            self.bottom_action_bar.setFixedHeight(48)
-            self.bottom_action_bar.setStyleSheet('QFrame#actionBar { min-height: 48px; padding: 2px 0px; }')
-            for btn in self.focus_buttons:
-                btn.hide()
-            self.btn_compare.setFixedHeight(36)
-            self.btn_compare.setMinimumWidth(120)
-            if hasattr(self, 'hf_instruction_label1'):
-                self.hf_instruction_label1.hide()
-            if hasattr(self, 'hf_instruction_label2'):
-                self.hf_instruction_label2.hide()
-        else:
-            self.bottom_action_bar.setFixedHeight(0)
-            self.bottom_action_bar.setStyleSheet('')
-            for btn in self.focus_buttons:
-                btn.show()
-            self.btn_compare.setFixedHeight(42)
-            self.btn_compare.setMinimumWidth(150)
-            if hasattr(self, 'hf_instruction_label1'):
-                self.hf_instruction_label1.show()
-            if hasattr(self, 'hf_instruction_label2'):
-                self.hf_instruction_label2.show()
-
     def request_comparison(self):
         if not self.viewer1.pdf_doc or not self.viewer2.pdf_doc:
             QMessageBox.warning(self, '경고', '양쪽 PDF를 먼저 로드해주세요.')
