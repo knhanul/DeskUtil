@@ -25,11 +25,6 @@ class PdfEditorWidget(QWidget):
         self.setStyleSheet(MODERN_QSS)
         self.setAcceptDrops(True)
 
-        self.lbl_name1 = QLabel()
-        self.lbl_name2 = QLabel()
-        self.lbl_name1.hide()
-        self.lbl_name2.hide()
-
         self.docs = []
         self.file_paths = []
         self.current_index = -1
