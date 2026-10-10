@@ -100,47 +100,315 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.select(viewer, 1)
         viewer.goto_page(3)
         self.select(viewer, 0)
-        self.assertEqual(set(viewer.selection_areas), {0, 1})
-        self.assertEqual(''.join(c['char'] for c in viewer.char_data), 'firstsecond')
-        self.assertEqual(set(viewer.last_compared_area), {0, 1})
-        self.assertEqual({c['page'] for c in viewer.char_data}, {0, 1})
-        self.assertEqual(len({c['word_id'] for c in viewer.char_data}), 2)
+        self.assertEqual(set(viewer.selection_areas), {0})
+        self.assertEqual(''.join(c['char'] for c in viewer.char_data), 'first')
+        self.assertEqual(set(viewer.last_compared_area), {0})
+        self.assertEqual({c['page'] for c in viewer.char_data}, {0})
+        self.assertEqual(len({c['word_id'] for c in viewer.char_data}), 1)
         viewer.zoom_in()
-        self.assertEqual(set(viewer.last_compared_area), {0, 1})
+        self.assertEqual(set(viewer.last_compared_area), {0})
         viewer.clear_all_data()
         self.assertFalse(viewer.selection_areas)
         self.assertIsNone(viewer.pending_selection_rect)
         self.assertFalse(viewer.char_data)
         viewer.close()
 
-    def test_multiple_regions_same_page_and_cross_pdf_page_numbers(self):
-        left = PDFViewer()
-        right = PDFViewer()
-        self.assertTrue(left.load_pdf(self.make_pdf('left.pdf', ['Match', 'Left'])))
-        self.addCleanup(left.pdf_doc.close)
-        self.assertTrue(right.load_pdf(self.make_pdf('right.pdf', ['Skip', 'Match', 'Right'])))
-        self.addCleanup(right.pdf_doc.close)
-        self.select(left, 0)
-        self.select(right, 1)
-        self.assertEqual(''.join(c['char'] for c in left.char_data), 'match')
-        self.assertEqual(''.join(c['char'] for c in right.char_data), 'match')
-        self.select(left, 1)
-        self.select(right, 2)
-        self.assertEqual(len(left.selection_areas), 2)
-        self.select(left, 1)
-        self.assertEqual(len(left.selection_areas[1]), 2)
-        self.assertEqual(len({c['word_id'] for c in left.char_data}), 3)
-        results = []
-        worker = PdfCompareWorker(left.char_data, right.char_data, left.raw_text, right.raw_text,
-                                  left.pending_selection_rect, right.pending_selection_rect)
-        worker.result_ready.connect(results.append)
-        worker.run()
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['s1_norm'], 'matchleftleft')
-        self.assertEqual(results[0]['s2_norm'], 'matchright')
-        self.assertTrue(results[0]['diff_pages1'])
-        left.close()
-        right.close()
+    def selection_viewer(self):
+        viewer = PDFViewer()
+        self.assertTrue(viewer.load_pdf(self.make_pdf('selection.pdf', ['Alpha', 'Beta', 'Alpha'])))
+        self.addCleanup(viewer.close)
+        self.addCleanup(viewer.pdf_doc.close)
+        return viewer
+
+    def select_pdf_rect(self, viewer, page, bounds):
+        x0, y0, x1, y1 = bounds
+        viewer.on_selection_complete(page, QRect(
+            round(x0 * viewer.scale), round(y0 * viewer.scale),
+            round((x1 - x0) * viewer.scale), round((y1 - y0) * viewer.scale)
+        ))
+
+    def document_point(self, viewer, page, x, y):
+        from PyQt6.QtCore import QPoint
+        return viewer.page_image_rect(page).topLeft() + QPoint(round(x * viewer.scale), round(y * viewer.scale))
+
+    def select_pages(self, viewer, first, last, reverse=False):
+        window = viewer.window()
+        window.resize(650, 450) if window is viewer else window.resize(1600, 700)
+        window.show()
+        self.app.processEvents()
+        start = self.document_point(viewer, first, 30, 55)
+        end = self.document_point(viewer, last, 290, 100)
+        if reverse:
+            start, end = end, start
+        viewer.begin_selection(start, viewer.container.mapToGlobal(start))
+        viewer.move_selection(end, viewer.container.mapToGlobal(end))
+        viewer.finish_selection(end)
+
+    def test_continuous_drag_and_reverse_drag_preserve_page_order(self):
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 2)
+        self.assertEqual(set(viewer.selection_areas), {0, 1, 2})
+        self.assertEqual(viewer.raw_text, 'Alpha\nBeta\nAlpha')
+        self.assertEqual(''.join(c['char'] for c in viewer.char_data), 'alphabetaalpha')
+        self.assertEqual(len({c['word_id'] for c in viewer.char_data}), 3)
+        original = viewer.char_data.copy(), viewer.raw_text
+        self.select_pages(viewer, 0, 2, reverse=True)
+        self.assertEqual((viewer.char_data, viewer.raw_text), original)
+        viewer.zoom_in()
+        self.assertEqual((viewer.char_data, viewer.raw_text), original)
+
+    def test_new_drag_replaces_previous_selection(self):
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 2)
+        self.select_pdf_rect(viewer, 1, (30, 60, 160, 80))
+        self.assertEqual(set(viewer.selection_areas), {1})
+        self.assertEqual(viewer.raw_text, 'Beta')
+        self.select_pdf_rect(viewer, 1, (30, 60, 160, 80))
+        self.assertEqual(viewer.raw_text, 'Beta')
+        self.assertEqual(len(viewer.selection_areas[1]), 1)
+
+    def test_center_based_extraction_includes_clipped_boundary_glyphs(self):
+        viewer = self.selection_viewer()
+        self.select_pdf_rect(viewer, 0, (30, 60, 160, 78))
+        self.assertEqual(viewer.raw_text, 'Alpha')
+        chars, raw = viewer.extract_and_process_text(0, QRect(45, 90, 195, 27))
+        self.assertEqual(raw, 'Alpha')
+        self.assertEqual(''.join(c['char'] for c in chars), 'alpha')
+
+    def test_click_and_cancel_keep_previous_selection(self):
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 1)
+        original = viewer.char_data.copy(), viewer.raw_text
+        viewer.on_selection_complete(0, QRect(30, 55, 100, 2))
+        start = self.document_point(viewer, 0, 40, 70)
+        viewer.begin_selection(start, viewer.container.mapToGlobal(start))
+        viewer.finish_selection(start)
+        self.assertEqual((viewer.char_data, viewer.raw_text), original)
+        viewer.begin_selection(start, viewer.container.mapToGlobal(start))
+        viewer.cancel_selection()
+        self.assertFalse(viewer.auto_scroll_timer.isActive())
+        self.assertIsNone(viewer.drag_start)
+        self.assertEqual((viewer.char_data, viewer.raw_text), original)
+
+    def test_mouse_events_cross_page_boundary_and_gap(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        viewer = self.selection_viewer()
+        viewer.resize(650, 450)
+        viewer.show()
+        self.app.processEvents()
+        label = viewer.page_labels[0]
+        start = label.mapFrom(viewer.container, self.document_point(viewer, 0, 30, 55))
+        end = label.mapFrom(viewer.container, self.document_point(viewer, 1, 290, 100))
+        QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(label, end)
+        self.assertIsNotNone(viewer.page_labels[1].selection_start)
+        QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=end)
+        self.assertEqual(viewer.raw_text, 'Alpha\nBeta')
+        self.assertFalse(viewer.auto_scroll_timer.isActive())
+
+    def test_auto_scroll_moves_endpoint_without_changing_start(self):
+        from PyQt6.QtCore import QPoint
+        viewer = self.selection_viewer()
+        viewer.resize(650, 450)
+        viewer.show()
+        self.app.processEvents()
+        start = self.document_point(viewer, 0, 30, 55)
+        edge = viewer.viewport().mapToGlobal(QPoint(200, viewer.viewport().height() - 1))
+        viewer.begin_selection(start, edge)
+        viewer.auto_scroll_selection()
+        self.assertGreater(viewer.verticalScrollBar().value(), 0)
+        self.assertEqual(viewer.drag_start, start)
+        self.assertEqual(viewer.drag_end, viewer.container.mapFromGlobal(edge))
+        viewer.drag_global_pos = viewer.viewport().mapToGlobal(QPoint(200, 0))
+        before = viewer.verticalScrollBar().value()
+        viewer.auto_scroll_selection()
+        self.assertLess(viewer.verticalScrollBar().value(), before)
+        viewer.cancel_selection()
+
+    def test_exclusion_filters_each_page_and_can_be_changed_after_selection(self):
+        path = Path(self.temp.name) / 'header_footer.pdf'
+        pdf = pymupdf.open()
+        for text in ('Alpha', 'Beta'):
+            page = pdf.new_page(width=300, height=400)
+            for y, value in ((25, 'HEAD'), (75, text), (380, 'FOOT')):
+                page.insert_text((40, y), value, fontsize=10)
+        pdf.save(path)
+        pdf.close()
+        viewer = PDFViewer()
+        self.assertTrue(viewer.load_pdf(path))
+        self.addCleanup(viewer.close)
+        self.addCleanup(viewer.pdf_doc.close)
+        self.select_pages(viewer, 0, 1)
+        self.assertIn('FOOT', viewer.raw_text)
+        self.assertIn('HEAD', viewer.raw_text)
+        viewer.set_exclusion_ratios(0.1, 0.1)
+        self.assertEqual(viewer.raw_text, 'Alpha\nBeta')
+        self.assertAlmostEqual(viewer.last_compared_area[0][0].y1, 360)
+        self.assertAlmostEqual(viewer.last_compared_area[1][0].y0, 40)
+        viewer.set_exclusion_ratios(0, 0)
+        self.assertIn('FOOT', viewer.raw_text)
+        self.assertIn('HEAD', viewer.raw_text)
+
+    def test_drag_keeps_horizontal_bounds_on_every_page(self):
+        path = Path(self.temp.name) / 'columns.pdf'
+        pdf = pymupdf.open()
+        for _ in range(2):
+            page = pdf.new_page(width=300, height=400)
+            page.insert_text((40, 75), 'Left', fontsize=12)
+            page.insert_text((220, 75), 'Right', fontsize=12)
+        pdf.save(path)
+        pdf.close()
+        viewer = PDFViewer()
+        self.assertTrue(viewer.load_pdf(path))
+        self.addCleanup(viewer.close)
+        self.addCleanup(viewer.pdf_doc.close)
+        viewer.resize(650, 450)
+        viewer.show()
+        self.app.processEvents()
+        start = self.document_point(viewer, 0, 30, 55)
+        end = self.document_point(viewer, 1, 160, 100)
+        viewer.begin_selection(start, viewer.container.mapToGlobal(start))
+        viewer.finish_selection(end)
+        self.assertEqual(viewer.raw_text, 'Left\nLeft')
+
+    def test_exclusion_change_invalidates_comparison_without_erasing_selection(self):
+        widget = PdfCompareWidget()
+        self.addCleanup(widget.close)
+        for viewer in (widget.viewer1, widget.viewer2):
+            self.assertTrue(viewer.load_pdf(self.make_pdf(f'{id(viewer)}.pdf', ['First', 'Second'])))
+            self.addCleanup(viewer.pdf_doc.close)
+            self.select_pages(viewer, 0, 1)
+        for viewer in (widget.viewer1, widget.viewer2):
+            viewer.word_highlights = {0: [((40, 50, 100, 80), 1, QColor(255, 0, 0))]}
+            viewer.diff_pages = [(0, 60)]
+            viewer.diff_index = 0
+        widget.last_s1_norm = widget.last_s2_norm = 'old'
+        widget.last_s1_raw = widget.last_s2_raw = 'Old'
+        widget.diff_list = [{'pdf': 'PDF 1', 'page': 1}]
+        widget.viewer1.set_exclusion_ratios(0.1, 0.1)
+        self.assertAlmostEqual(widget.viewer2.header_ratio, 0.05)
+        self.assertAlmostEqual(widget.viewer2.footer_ratio, 0.05)
+        for viewer in (widget.viewer1, widget.viewer2):
+            self.assertEqual(set(viewer.selection_areas), {0, 1})
+            self.assertEqual(viewer.raw_text, 'First\nSecond')
+            self.assertFalse(viewer.word_highlights)
+            self.assertFalse(viewer.diff_pages)
+            self.assertEqual(viewer.diff_index, -1)
+        self.assertEqual(widget.last_s1_norm, '')
+        self.assertEqual(widget.last_s2_norm, '')
+        self.assertEqual(widget.last_s1_raw, '')
+        self.assertEqual(widget.last_s2_raw, '')
+        self.assertFalse(widget.diff_list)
+
+    def test_instruction_labels_and_default_exclusion_match_full_compare(self):
+        widget = PdfCompareWidget()
+        self.addCleanup(widget.close)
+        for label in (widget.hf_instruction_label1, widget.hf_instruction_label2):
+            self.assertIn('머릿글/바닥글 제외 설정', label.text())
+            self.assertFalse(label.isHidden())
+        for viewer in (widget.viewer1, widget.viewer2):
+            self.assertTrue(viewer.load_pdf(self.make_pdf(f'{id(viewer)}.pdf', ['First'])))
+            self.addCleanup(viewer.pdf_doc.close)
+            self.assertAlmostEqual(viewer.header_ratio, 0.05)
+            self.assertAlmostEqual(viewer.footer_ratio, 0.05)
+        self.assertTrue(widget.hf_instruction_label1.isHidden())
+        self.assertTrue(widget.hf_instruction_label2.isHidden())
+        widget.viewer1.clear_all_data()
+        self.assertFalse(widget.hf_instruction_label1.isHidden())
+        self.assertTrue(widget.hf_instruction_label2.isHidden())
+
+    def test_exclusion_edges_drag_directly_without_starting_selection(self):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtTest import QTest
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 1)
+        original = viewer.raw_text
+        self.assertFalse(hasattr(viewer, 'exclusion_mode_btn'))
+        self.assertFalse(hasattr(viewer, 'header_spin'))
+        self.assertFalse(hasattr(viewer, 'footer_spin'))
+        label = viewer.page_labels[0]
+        image = label._image_rect()
+        point = QPoint(image.center().x(), image.y() + round(image.height() * 0.05))
+        QTest.mouseMove(label, point)
+        self.assertEqual(label.cursor().shape(), Qt.CursorShape.SizeVerCursor)
+        QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=point)
+        point.setY(image.y() + round(image.height() * 0.1))
+        QTest.mouseMove(label, point)
+        QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=point)
+        self.assertAlmostEqual(viewer.header_ratio, 0.1)
+        self.assertEqual(viewer.raw_text, original)
+        self.assertIsNone(viewer.drag_start)
+        self.assertFalse(viewer.auto_scroll_timer.isActive())
+        label = viewer.page_labels[1]
+        image = label._image_rect()
+        point = QPoint(image.center().x(), image.y() + round(image.height() * 0.95))
+        QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=point)
+        point.setY(image.y() + round(image.height() * 0.9))
+        QTest.mouseMove(label, point)
+        QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=point)
+        self.assertAlmostEqual(viewer.footer_ratio, 0.1)
+        self.assertEqual(viewer.raw_text, original)
+        viewer.zoom_in()
+        self.app.processEvents()
+        self.assertAlmostEqual(viewer.header_ratio, 0.1)
+        self.assertAlmostEqual(viewer.footer_ratio, 0.1)
+        self.select_pages(viewer, 0, 2)
+        self.assertEqual(viewer.raw_text, 'Alpha\nBeta\nAlpha')
+
+    def test_header_drag_does_not_move_footer_when_boundaries_meet(self):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtTest import QTest
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 1)
+        viewer.set_exclusion_ratios(0.1, 0.2)
+        label = viewer.page_labels[0]
+        image = label._image_rect()
+        point = QPoint(image.center().x(), image.y() + round(image.height() * 0.1))
+        QTest.mousePress(label, Qt.MouseButton.LeftButton, pos=point)
+        point.setY(image.bottom())
+        QTest.mouseMove(label, point)
+        QTest.mouseRelease(label, Qt.MouseButton.LeftButton, pos=point)
+        self.assertAlmostEqual(viewer.header_ratio, 0.75)
+        self.assertAlmostEqual(viewer.footer_ratio, 0.2)
+
+    def test_context_menu_clears_whole_range_after_zoom(self):
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtGui import QContextMenuEvent
+        viewer = self.selection_viewer()
+        self.select_pages(viewer, 0, 2)
+        viewer.zoom_in()
+        label = viewer.page_labels[1]
+        label.resize(label.pixmap().width() + 100, label.pixmap().height() + 60)
+        point = label._image_rect().topLeft() + QPoint(round(40 * viewer.scale), round(70 * viewer.scale))
+        event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, label.mapToGlobal(point))
+        with patch('app.tools.pdf_compare.QMenu.exec', lambda menu, pos: menu.actions()[0]):
+            label.contextMenuEvent(event)
+        self.assertFalse(viewer.selection_areas)
+        self.assertFalse(viewer.char_data)
+        self.assertFalse(viewer.last_compared_area)
+        self.assertEqual(viewer.raw_text, '')
+        self.assertIsNone(viewer.pending_selection_rect)
+
+    def test_supplied_pdf_boundary_selection_extracts_items_one_to_six(self):
+        paths = list(Path(__file__).parent.glob('기초서류*.pdf'))
+        if not paths:
+            self.skipTest('Local PDF regression fixture is not available')
+        viewer = PDFViewer()
+        viewer.pdf_doc = pymupdf.open(paths[0])
+        self.addCleanup(viewer.close)
+        self.addCleanup(viewer.pdf_doc.close)
+        viewer.selection_areas = {
+            7: [pymupdf.Rect(55, 690, 559, 842)],
+            8: [pymupdf.Rect(55, 0, 559, 103)],
+        }
+        viewer.set_exclusion_ratios(0.1, 0.05)
+        self.assertTrue(viewer.raw_text.startswith('주) 1.'))
+        for number in range(2, 7):
+            self.assertIn(f'{number}. ', viewer.raw_text)
+        self.assertNotIn('본 상품설명서는', viewer.raw_text)
+        self.assertNotIn('고객보관용', viewer.raw_text)
+        self.assertEqual({c['page'] for c in viewer.char_data}, {7, 8})
 
     def test_widget_comparison_reports_differences_on_selected_pages(self):
         from PyQt6.QtCore import QEventLoop, QTimer
@@ -149,10 +417,8 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.addCleanup(widget.viewer1.pdf_doc.close)
         self.assertTrue(widget.viewer2.load_pdf(self.make_pdf('compare2.pdf', ['Skip', 'Match', 'Right'])))
         self.addCleanup(widget.viewer2.pdf_doc.close)
-        self.select(widget.viewer1, 0)
-        self.select(widget.viewer1, 1)
-        self.select(widget.viewer2, 1)
-        self.select(widget.viewer2, 2)
+        self.select_pages(widget.viewer1, 0, 1)
+        self.select_pages(widget.viewer2, 1, 2)
         widget.btn_compare.click()
         loop = QEventLoop()
         widget.compare_manager.result_ready.connect(loop.quit)
@@ -166,6 +432,44 @@ class MultiPageSelectionTests(unittest.TestCase):
         QTimer.singleShot(200, loop.quit)
         loop.exec()
         widget.close()
+
+    def test_area_comparison_keeps_each_viewers_scroll_position(self):
+        from PyQt6.QtCore import QEventLoop, QTimer
+        widget = PdfCompareWidget()
+        self.addCleanup(widget.close)
+        for viewer, name, texts in (
+            (widget.viewer1, 'position1.pdf', ['Cover', 'Same', 'Left', 'Tail']),
+            (widget.viewer2, 'position2.pdf', ['Cover', 'Same', 'Right', 'Tail']),
+        ):
+            self.assertTrue(viewer.load_pdf(self.make_pdf(name, texts)))
+            self.addCleanup(viewer.pdf_doc.close)
+            self.select_pages(viewer, 1, 2)
+        loop = QEventLoop()
+        QTimer.singleShot(300, loop.quit)
+        loop.exec()
+        widget.viewer1.verticalScrollBar().setValue(widget.viewer1.page_labels[1].y() + 40)
+        widget.viewer2.verticalScrollBar().setValue(widget.viewer2.page_labels[2].y() + 60)
+        positions = [(viewer.verticalScrollBar().value(), viewer.horizontalScrollBar().value(), viewer.page_spin.text())
+                     for viewer in (widget.viewer1, widget.viewer2)]
+        labels = [list(viewer.page_labels) for viewer in (widget.viewer1, widget.viewer2)]
+        for _ in range(2):
+            widget.btn_compare.click()
+            loop = QEventLoop()
+            widget.compare_manager.result_ready.connect(loop.quit)
+            QTimer.singleShot(3000, loop.quit)
+            loop.exec()
+            self.assertEqual(widget.last_s1_norm, 'sameleft')
+            self.assertEqual(widget.last_s2_norm, 'sameright')
+            loop = QEventLoop()
+            QTimer.singleShot(350, loop.quit)
+            loop.exec()
+            self.assertTrue(widget.btn_compare.isEnabled())
+            for viewer, position, previous_labels in zip((widget.viewer1, widget.viewer2), positions, labels):
+                self.assertEqual((viewer.verticalScrollBar().value(), viewer.horizontalScrollBar().value(),
+                                  viewer.page_spin.text()), position)
+                self.assertEqual(viewer.page_labels, previous_labels)
+                self.assertTrue(viewer.word_highlights)
+                self.assertNotEqual(viewer.page_labels[2].pixmap().toImage(), viewer.page_base_pixmaps[2].toImage())
 
     def test_full_compare_scroll_stays_continuous_before_comparison(self):
         from PyQt6.QtCore import QEventLoop, QTimer
@@ -351,10 +655,8 @@ class MultiPageSelectionTests(unittest.TestCase):
         self.addCleanup(widget.viewer1.pdf_doc.close)
         self.assertTrue(widget.viewer2.load_pdf(self.make_pdf('reset2.pdf', ['First', 'Second'])))
         self.addCleanup(widget.viewer2.pdf_doc.close)
-        self.select(widget.viewer1, 0)
-        self.select(widget.viewer1, 1)
-        self.select(widget.viewer2, 0)
-        self.select(widget.viewer2, 1)
+        self.select_pages(widget.viewer1, 0, 1)
+        self.select_pages(widget.viewer2, 0, 1)
         widget.get_current_page = lambda viewer: 1
         widget._do_reset_current_page(0)
         from PyQt6.QtCore import QEventLoop, QTimer

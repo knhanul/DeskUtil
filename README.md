@@ -1,4 +1,4 @@
-# NuniDesk (DeskUtil)
+# PdfDiff
 
 PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, PDF 생성 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
 
@@ -12,7 +12,7 @@ PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입�
 ## 프로젝트 구조
 
 ```
-DeskUtil/
+PdfDiff/
 ├── main.py                      # 엔트리포인트
 ├── build.py                     # PyInstaller 빌드 스크립트
 ├── requirements.txt             # 의존성 목록
