@@ -1,7 +1,7 @@
 import os
 import re
 
-import fitz
+import pymupdf
 from PyQt6.QtCore import QEasingCurve, QPoint, QParallelAnimationGroup, QPropertyAnimation, QRect, QTimer, Qt, QMimeData
 from PyQt6.QtGui import QColor, QFont, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget
@@ -405,7 +405,7 @@ class PDFViewer(QScrollArea):
             if selected.isEmpty():
                 continue
             local = selected.translated(-image.topLeft())
-            areas[page_num] = [fitz.Rect(local.x() / self.scale, local.y() / self.scale,
+            areas[page_num] = [pymupdf.Rect(local.x() / self.scale, local.y() / self.scale,
                                         (local.x() + local.width()) / self.scale,
                                         (local.y() + local.height()) / self.scale)]
         return areas
@@ -478,7 +478,7 @@ class PDFViewer(QScrollArea):
 
     def effective_area(self, page_num, area):
         page = self.pdf_doc.load_page(page_num)
-        body = fitz.Rect(page.rect.x0, page.rect.height * self.header_ratio,
+        body = pymupdf.Rect(page.rect.x0, page.rect.height * self.header_ratio,
                          page.rect.x1, page.rect.height * (1 - self.footer_ratio))
         return area & body
 
@@ -499,7 +499,7 @@ class PDFViewer(QScrollArea):
 
     def load_pdf(self, path):
         try:
-            pdf_doc = fitz.open(path)
+            pdf_doc = pymupdf.open(path)
             self.clear_all_data()
             self.pdf_doc = pdf_doc
             self.set_exclusion_ratios(self.DEFAULT_EXCLUSION_RATIO, self.DEFAULT_EXCLUSION_RATIO, rebuild=False)
@@ -615,7 +615,7 @@ class PDFViewer(QScrollArea):
         self.page_total_label.setText(f'/ {total_pages}')
         for i in range(total_pages):
             page = self.pdf_doc.load_page(i)
-            pix = page.get_pixmap(matrix=fitz.Matrix(self.scale, self.scale))
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(self.scale, self.scale))
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
             base_pixmap = QPixmap.fromImage(img.copy())
             lbl = SelectableLabel(self.container)
@@ -669,13 +669,13 @@ class PDFViewer(QScrollArea):
         y0 = rect.y() / self.scale
         x1 = (rect.x() + rect.width()) / self.scale
         y1 = (rect.y() + rect.height()) / self.scale
-        fitz_rect = fitz.Rect(x0, y0, x1, y1)
+        fitz_rect = pymupdf.Rect(x0, y0, x1, y1)
         self.selection_areas = {page_num: [fitz_rect]}
         self.pending_selection_rect = (page_num, fitz_rect)
         self.update_selection_data()
 
     def selection_index_at(self, page_num, point):
-        pdf_point = fitz.Point(point.x() / self.scale, point.y() / self.scale)
+        pdf_point = pymupdf.Point(point.x() / self.scale, point.y() / self.scale)
         areas = self.selection_areas.get(page_num, [])
         return next((index for index in range(len(areas) - 1, -1, -1)
                      if areas[index].contains(pdf_point)), None)
@@ -728,7 +728,7 @@ class PDFViewer(QScrollArea):
         y0 = rect.y() / self.scale
         x1 = (rect.x() + rect.width()) / self.scale
         y1 = (rect.y() + rect.height()) / self.scale
-        fitz_rect = fitz.Rect(x0, y0, x1, y1)
+        fitz_rect = pymupdf.Rect(x0, y0, x1, y1)
         return self.extract_selected_text(page_num, [fitz_rect])
 
     def extract_selected_text(self, page_num, areas):
@@ -738,7 +738,7 @@ class PDFViewer(QScrollArea):
         selected_chars = []
         for char in raw_chars:
             x0, y0, x1, y1 = char['bbox']
-            center = fitz.Point((x0 + x1) / 2, (y0 + y1) / 2)
+            center = pymupdf.Point((x0 + x1) / 2, (y0 + y1) / 2)
             if any(not area.is_empty and area.contains(center) for area in effective_areas):
                 selected_chars.append(char)
         return normalize_raw_chars(selected_chars)

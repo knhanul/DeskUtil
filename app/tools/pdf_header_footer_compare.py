@@ -1,7 +1,7 @@
 import os
 import re
 
-import fitz
+import pymupdf
 from PyQt6.QtCore import QRect, QTimer, Qt
 from PyQt6.QtGui import QColor, QImage, QMovie, QPainter, QPen, QPixmap, QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import (
@@ -343,7 +343,7 @@ class HFViewer(QScrollArea):
         try:
             self.header_ratio = self.DEFAULT_EXCLUSION_RATIO
             self.footer_ratio = self.DEFAULT_EXCLUSION_RATIO
-            self.pdf_doc = fitz.open(path)
+            self.pdf_doc = pymupdf.open(path)
             self.reload_pages()
             return True
         except Exception:
@@ -436,7 +436,7 @@ class HFViewer(QScrollArea):
         self.page_total_label.setText(f'/ {total_pages}')
         for i in range(total_pages):
             page = self.pdf_doc.load_page(i)
-            pix = page.get_pixmap(matrix=fitz.Matrix(self.scale, self.scale))
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(self.scale, self.scale))
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
             base_pixmap = QPixmap.fromImage(img.copy())
             lbl = HeaderFooterLabel(self.container)
