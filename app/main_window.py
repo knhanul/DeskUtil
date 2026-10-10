@@ -262,7 +262,7 @@ class MdiMainWindow(QMainWindow):
                 'class_name': 'PdfCompareWidget',
                 'singleton': True,
                 'enabled': True,
-                'icon': '📄',
+                'icon': '🎯',
             },
             {
                 'key': 'pdf_hf_compare',
@@ -272,7 +272,7 @@ class MdiMainWindow(QMainWindow):
                 'class_name': 'HFCompareWidget',
                 'singleton': True,
                 'enabled': True,
-                'icon': '📄',
+                'icon': '📁',
             },
         ]
         self.tool_definitions = tool_definitions
