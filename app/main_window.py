@@ -274,16 +274,6 @@ class MdiMainWindow(QMainWindow):
                 'enabled': True,
                 'icon': '📄',
             },
-            {
-                'key': 'pdf_generator',
-                'menu_title': 'PDF 생성',
-                'window_title': 'PDF 생성',
-                'module_path': 'app.tools.pdf_generator_ui',
-                'class_name': 'PdfGeneratorWidget',
-                'singleton': True,
-                'enabled': True,
-                'icon': '📄',
-            },
         ]
         self.tool_definitions = tool_definitions
 
@@ -336,10 +326,6 @@ class MdiMainWindow(QMainWindow):
     def close_current_tool(self):
         """현재 활성화된 도구 닫기"""
         if not self.current_tool_widget:
-            return
-
-        if self.current_tool_key == 'pdf_generator' and self.current_tool_widget.is_running():
-            QMessageBox.information(self, 'PDF 생성', '진행 중인 변환이 끝난 뒤 화면을 닫을 수 있습니다.')
             return
 
         # close()를 호출하여 closeEvent가 실행되도록 함 (스레드 정리)
@@ -410,11 +396,6 @@ class MdiMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """애플리케이션 종료 시 모든 스레드 정리 (좀비 프로세스 방지)"""
-        generator = self.tool_cache.get('pdf_generator')
-        if generator and generator.is_running():
-            QMessageBox.information(self, 'PDF 생성', '진행 중인 변환이 끝난 뒤 종료할 수 있습니다. 작업 취소를 누르면 현재 파일 처리 후 중단됩니다.')
-            event.ignore()
-            return
         # 현재 활성화된 도구의 스레드 정리
         if self.current_tool_widget:
             self.current_tool_widget.close()

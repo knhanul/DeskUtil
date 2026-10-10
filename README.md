@@ -1,6 +1,6 @@
 # PdfDiff
 
-PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교, PDF 생성 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
+PyQt6 기반의 Windows 데스크톱 문서 유틸리티 애플리케이션입니다. PDF 비교 기능을 하나의 통합된 UI에서 제공합니다. 동일한 코드베이스에서 빌드 타겟(`posid`, `post`, `nuni`)에 따라 앱 이름/아이콘/테마 색상을 분리하여 배포할 수 있습니다.
 
 ## 주요 기능
 
@@ -33,7 +33,6 @@ PdfDiff/
 │   ├── target_post.py           # post 타겟 설정
 │   ├── target_nuni.py           # nuni 타겟 설정
 │   └── target_qamate.py         # qamate 타겟 설정(빌드 대상 아님)
-├── pdf_generator/               # PDF 생성 (문서/이미지 → PDF 변환)
 ├── assets/                      # 타겟별 아이콘/로고
 │   ├── posid/
 │   ├── post/
@@ -61,7 +60,7 @@ PdfDiff/
 - Windows 10/11
 - Python 3.12+
 - 의존성: `requirements.txt` 참조
-  - PyQt6, PyMuPDF, Pillow
+  - PyQt6, PyMuPDF
   - 빌드 시 추가: `pyinstaller`
 
 ## 개발 환경 설정
