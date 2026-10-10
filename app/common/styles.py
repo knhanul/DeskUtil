@@ -3,7 +3,7 @@ from app.common.resources import THEME_COLOR_PRIMARY
 
 COLOR_PRIMARY = THEME_COLOR_PRIMARY
 COLOR_SECONDARY = '#FF6D00'
-COLOR_SIDEBAR_BG = '#F2F2F7'
+COLOR_SIDEBAR_BG = '#FFF4E6'
 COLOR_HEADER_BG = '#FFFFFF'
 COLOR_MDI_BG = '#F2F2F7'
 COLOR_WORKSPACE_DARK = '#1C1C1E'
@@ -26,6 +26,8 @@ _PRIMARY_PRESSED = '#CC5200'
 _PRIMARY_LIGHT = 'rgba(255, 107, 0, 0.08)'
 _PRIMARY_LIGHT_STRONG = 'rgba(255, 107, 0, 0.15)'
 _PRIMARY_SELECTION = 'rgba(255, 107, 0, 0.25)'
+_SIDEBAR_BG = '#FFF4E6'          # soft orange background
+_SIDEBAR_BORDER = '#FFD4A8'
 
 _IOS_GREEN = '#34C759'
 _IOS_ORANGE = '#FF9500'
@@ -51,9 +53,9 @@ QMainWindow, QDialog {{
 
 /* ── Sidebar ── */
 QFrame#sidebar {{
-    background-color: rgba(242, 242, 247, 0.95);
+    background-color: {_SIDEBAR_BG};
     border: none;
-    border-right: 1px solid {_IOS_SEPARATOR};
+    border-right: 1px solid {_SIDEBAR_BORDER};
 }}
 
 QLabel#sidebarBrandTitle {{
