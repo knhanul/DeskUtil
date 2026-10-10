@@ -74,7 +74,7 @@ QPushButton#sidebarBtn {{
     border: none;
     border-radius: 12px;
     padding: 12px 16px;
-    color: {COLOR_TEXT_PRIMARY};
+    color: {_PRIMARY};
     font-size: 14px;
     font-weight: 500;
     text-align: left;
@@ -84,11 +84,12 @@ QPushButton#sidebarBtn[collapsed='true'] {{
     padding: 8px;
     text-align: center;
     font-size: 20px;
+    color: {_PRIMARY};
 }}
 
 QPushButton#sidebarBtn:hover {{
     background-color: {_PRIMARY_LIGHT};
-    color: {_PRIMARY};
+    color: {_PRIMARY_HOVER};
 }}
 
 QPushButton#sidebarBtn[active='true'] {{
