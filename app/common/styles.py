@@ -17,12 +17,16 @@ COLOR_ACTIVE = '#D1D1D6'
 
 COLOR_P1 = QColor(255, 149, 0, 140)  # Orange for PDF1
 COLOR_P2 = QColor(0, 255, 127, 140)  # Green for PDF2
-COLOR_AREA = QColor(0, 120, 255, 15)
+COLOR_AREA = QColor(255, 107, 0, 20)  # Orange area highlight
 
-# iOS-inspired system blue
-_IOS_BLUE = '#007AFF'
-_IOS_BLUE_HOVER = '#0066D6'
-_IOS_BLUE_PRESSED = '#0055B3'
+# POSID Orange brand colors (Yellow + Red)
+_PRIMARY = '#FF6B00'
+_PRIMARY_HOVER = '#E65C00'
+_PRIMARY_PRESSED = '#CC5200'
+_PRIMARY_LIGHT = 'rgba(255, 107, 0, 0.08)'
+_PRIMARY_LIGHT_STRONG = 'rgba(255, 107, 0, 0.15)'
+_PRIMARY_SELECTION = 'rgba(255, 107, 0, 0.25)'
+
 _IOS_GREEN = '#34C759'
 _IOS_ORANGE = '#FF9500'
 _IOS_ORANGE_HOVER = '#E68600'
@@ -53,7 +57,7 @@ QFrame#sidebar {{
 }}
 
 QLabel#sidebarBrandTitle {{
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
     font-size: 17px;
     font-weight: 700;
     letter-spacing: -0.4px;
@@ -83,12 +87,12 @@ QPushButton#sidebarBtn[collapsed='true'] {{
 }}
 
 QPushButton#sidebarBtn:hover {{
-    background-color: rgba(0, 122, 255, 0.08);
-    color: {_IOS_BLUE};
+    background-color: {_PRIMARY_LIGHT};
+    color: {_PRIMARY};
 }}
 
 QPushButton#sidebarBtn[active='true'] {{
-    background-color: {_IOS_BLUE};
+    background-color: {_PRIMARY};
     color: #FFFFFF;
 }}
 
@@ -118,17 +122,17 @@ QPushButton#hamburgerBtn {{
     border-radius: 10px;
     padding: 8px;
     font-size: 18px;
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
     min-width: 40px;
     min-height: 40px;
 }}
 
 QPushButton#hamburgerBtn:hover {{
-    background-color: rgba(0, 122, 255, 0.08);
+    background-color: {_PRIMARY_LIGHT};
 }}
 
 QPushButton#hamburgerBtn:pressed {{
-    background-color: rgba(0, 122, 255, 0.15);
+    background-color: {_PRIMARY_LIGHT_STRONG};
 }}
 
 /* ── MDI Area ── */
@@ -149,7 +153,7 @@ QPushButton {{
     border: 0.5px solid {_IOS_SEPARATOR};
     border-radius: 10px;
     padding: 8px 18px;
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
     font-weight: 500;
     font-size: 13px;
 }}
@@ -157,16 +161,16 @@ QPushButton {{
 QPushButton:hover {{
     background-color: {_IOS_FILL};
     border-color: {_IOS_SEPARATOR};
-    color: {_IOS_BLUE_HOVER};
+    color: {_PRIMARY_HOVER};
 }}
 
 QPushButton:pressed {{
     background-color: {COLOR_ACTIVE};
 }}
 
-/* Primary action button (iOS filled style) */
+/* Primary action button */
 QPushButton#actionBtn {{
-    background-color: {_IOS_BLUE};
+    background-color: {_PRIMARY};
     color: #FFFFFF;
     border: none;
     border-radius: 12px;
@@ -176,16 +180,16 @@ QPushButton#actionBtn {{
 }}
 
 QPushButton#actionBtn:hover {{
-    background-color: {_IOS_BLUE_HOVER};
+    background-color: {_PRIMARY_HOVER};
 }}
 
 QPushButton#actionBtn:pressed {{
-    background-color: {_IOS_BLUE_PRESSED};
+    background-color: {_PRIMARY_PRESSED};
 }}
 
-/* Compare button (accent orange) */
+/* Compare button (accent) */
 QPushButton#compareBtn {{
-    background-color: {_IOS_ORANGE};
+    background-color: {_PRIMARY};
     color: #FFFFFF;
     border: none;
     border-radius: 12px;
@@ -196,11 +200,11 @@ QPushButton#compareBtn {{
 }}
 
 QPushButton#compareBtn:hover {{
-    background-color: {_IOS_ORANGE_HOVER};
+    background-color: {_PRIMARY_HOVER};
 }}
 
 QPushButton#compareBtn:pressed {{
-    background-color: {_IOS_ORANGE_PRESSED};
+    background-color: {_PRIMARY_PRESSED};
 }}
 
 QPushButton#zoomBtn {{
@@ -242,7 +246,7 @@ QTextEdit {{
     border: 0.5px solid {_IOS_SEPARATOR};
     border-radius: 12px;
     padding: 12px;
-    selection-background-color: rgba(0, 122, 255, 0.25);
+    selection-background-color: {_PRIMARY_SELECTION};
 }}
 
 /* ── Scrollbars (thin, iOS-style) ── */
@@ -324,15 +328,15 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
     padding: 4px 8px;
     min-width: 32px;
     max-width: 32px;
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
 }}
 
 #infoBtn:hover {{
-    background-color: rgba(0, 122, 255, 0.08);
+    background-color: {_PRIMARY_LIGHT};
 }}
 
 #infoBtn:pressed {{
-    background-color: rgba(0, 122, 255, 0.15);
+    background-color: {_PRIMARY_LIGHT_STRONG};
 }}
 
 /* ── Close Tool Button ── */
@@ -368,16 +372,16 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
     border-radius: 8px;
     font-size: 12px;
     padding: 5px 8px;
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
 }}
 
 #toolbarBtn:hover {{
-    background-color: rgba(0, 122, 255, 0.08);
-    border-color: {_IOS_BLUE};
+    background-color: {_PRIMARY_LIGHT};
+    border-color: {_PRIMARY};
 }}
 
 #toolbarBtn:pressed {{
-    background-color: rgba(0, 122, 255, 0.15);
+    background-color: {_PRIMARY_LIGHT_STRONG};
 }}
 
 #toolbarLabel {{
@@ -396,11 +400,11 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
 }}
 
 #toolbarSearch:focus {{
-    border-color: {_IOS_BLUE};
+    border-color: {_PRIMARY};
     background-color: #FFFFFF;
 }}
 
-/* ── Checkbox (iOS toggle feel) ── */
+/* ── Checkbox ── */
 QCheckBox {{
     color: {COLOR_TEXT_PRIMARY};
     spacing: 8px;
@@ -416,8 +420,8 @@ QCheckBox::indicator {{
 }}
 
 QCheckBox::indicator:checked {{
-    background: {_IOS_BLUE};
-    border: 1.5px solid {_IOS_BLUE};
+    background: {_PRIMARY};
+    border: 1.5px solid {_PRIMARY};
 }}
 
 QCheckBox#actionCheckBox {{
@@ -435,24 +439,24 @@ QFrame#actionBar {{
     min-height: 56px;
 }}
 
-/* Secondary (ghost) button — 추출 데이터 확인 등 */
+/* Secondary (ghost) button */
 QPushButton#secondaryBtn {{
     background-color: transparent;
-    border: 1px solid {_IOS_BLUE};
+    border: 1px solid {_PRIMARY};
     border-radius: 12px;
     padding: 0px 18px;
-    color: {_IOS_BLUE};
+    color: {_PRIMARY};
     font-weight: 600;
     font-size: 13px;
     min-height: 38px;
 }}
 
 QPushButton#secondaryBtn:hover {{
-    background-color: rgba(0, 122, 255, 0.08);
+    background-color: {_PRIMARY_LIGHT};
 }}
 
 QPushButton#secondaryBtn:pressed {{
-    background-color: rgba(0, 122, 255, 0.16);
+    background-color: {_PRIMARY_LIGHT_STRONG};
 }}
 
 /* Reset / destructive (soft) */
