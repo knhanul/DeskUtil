@@ -11,6 +11,8 @@ from app.common.styles import COLOR_WORKSPACE_DARK, COLOR_P1, COLOR_P2, COLOR_AR
 from app.common.pdf_search_helper import PDFSearchHelper
 from app.common.pdf_compare_worker import CompareThreadManager
 from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
+from app.common.comparison_options import ComparisonOptions
+from app.common.comparison_settings import ComparisonSettingsMixin
 
 
 class ViewComparisonTextDialog(QDialog):
@@ -217,6 +219,7 @@ class PDFViewer(QScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.comparison_options = ComparisonOptions()
         self.setObjectName('pdfViewerArea')
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -531,6 +534,7 @@ class PDFViewer(QScrollArea):
     def set_parent_tool(self, parent_tool):
         """Set reference to parent tool for callback"""
         self.parent_tool = parent_tool
+        self.comparison_options = parent_tool.comparison_settings.options
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event"""
@@ -708,13 +712,21 @@ class PDFViewer(QScrollArea):
         self.char_data = []
         raw_texts = []
         word_offset = 0
-        for page_num in sorted(self.selection_areas):
-            chars, text = self.extract_selected_text(page_num, self.selection_areas[page_num])
-            self.char_data.extend({**char, 'word_id': char['word_id'] + word_offset} for char in chars)
-            word_offset += max((char['word_id'] for char in chars), default=0)
-            if text:
-                raw_texts.append(text)
+        if self.comparison_options.mode == 'body':
+            for page_num in sorted(self.selection_areas):
+                chars, text = self.extract_selected_text(page_num, self.selection_areas[page_num])
+                self.char_data.extend({**char, 'word_id': char['word_id'] + word_offset} for char in chars)
+                word_offset += max((char['word_id'] for char in chars), default=0)
+                if text:
+                    raw_texts.append(text)
         self.raw_text = '\n'.join(raw_texts)
+        if self.comparison_options.mode != 'body':
+            # Normalize all selected pages together so page-boundary newlines also
+            # have coordinates and do not get lost by per-page concatenation.
+            raw_chars = [char for page_num in sorted(self.selection_areas)
+                         for char in self.collect_selected_chars(page_num, self.selection_areas[page_num])]
+            self.char_data, self.raw_text = normalize_raw_chars(
+                raw_chars, page_aware=True, options=self.comparison_options)
         if self.pending_selection_rect:
             page_num, rect = self.pending_selection_rect
             if rect not in self.selection_areas.get(page_num, []):
@@ -732,6 +744,10 @@ class PDFViewer(QScrollArea):
         return self.extract_selected_text(page_num, [fitz_rect])
 
     def extract_selected_text(self, page_num, areas):
+        return normalize_raw_chars(self.collect_selected_chars(page_num, areas),
+                                   options=self.comparison_options)
+
+    def collect_selected_chars(self, page_num, areas):
         page = self.pdf_doc.load_page(page_num)
         raw_chars = collect_raw_chars(page.get_text('rawdict'), page_num)
         effective_areas = [self.effective_area(page_num, area) for area in areas]
@@ -741,7 +757,7 @@ class PDFViewer(QScrollArea):
             center = pymupdf.Point((x0 + x1) / 2, (y0 + y1) / 2)
             if any(not area.is_empty and area.contains(center) for area in effective_areas):
                 selected_chars.append(char)
-        return normalize_raw_chars(selected_chars)
+        return selected_chars
 
     def _on_page_return_pressed(self):
         self._on_goto_page()
@@ -881,15 +897,16 @@ class PDFViewer(QScrollArea):
         self.refresh_highlights()
 
 
-class PdfCompareWidget(QWidget):
+class PdfCompareWidget(ComparisonSettingsMixin, QWidget):
     tool_key = 'pdf_compare'
     tool_name = '📄 PDF 지정 영역 비교'
     window_title = 'PDF 지정 영역 비교'
     singleton = True
     enabled = True
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, comparison_settings=None):
         super().__init__(parent)
+        self.setup_comparison_settings(comparison_settings)
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
         layout.setContentsMargins(10, 0, 10, 10)
@@ -1039,6 +1056,7 @@ class PdfCompareWidget(QWidget):
         self.btn_diff_list.setMinimumWidth(100)
         self.btn_diff_list.clicked.connect(self.show_diff_list_dialog)
         bottom_action_layout.addWidget(self.btn_diff_list)
+        self.add_comparison_options_button(bottom_action_layout)
 
         bottom_action_layout.addStretch()
 
@@ -1098,6 +1116,7 @@ class PdfCompareWidget(QWidget):
 
     def show_loading(self, show: bool, message: str = ""):
         """로딩 오버레이 표시/숨김 및 workspace 활성화/비활성화"""
+        self.comparison_settings.set_busy(self, show)
         if show:
             if message:
                 self.loading_message.setText(message)
@@ -1131,8 +1150,14 @@ class PdfCompareWidget(QWidget):
             viewer.refresh_highlights()
 
     def request_comparison(self):
-        if not self.viewer1.char_data or not self.viewer2.char_data:
+        legacy = self.comparison_settings.options.mode == 'body'
+        missing_selection = (not self.viewer1.selection_areas or not self.viewer2.selection_areas)
+        if ((legacy and (not self.viewer1.char_data or not self.viewer2.char_data))
+                or (not legacy and missing_selection)):
             QMessageBox.warning(self, '경고', '양쪽 비교 영역을 먼저 드래그해주세요.')
+            return
+        if not self.viewer1.char_data and not self.viewer2.char_data:
+            QMessageBox.information(self, '안내', '현재 비교 조건과 선택 영역에서 비교할 텍스트가 없습니다.')
             return
         self.start_async_comparison()
 
@@ -1259,6 +1284,7 @@ class PdfCompareWidget(QWidget):
 
     def start_async_comparison(self):
         """비동기 PDF 비교 시작 (QThread 사용)"""
+        self._active_comparison_revision = self.comparison_settings.revision
         # 이전 manager 정리
         if self.compare_manager:
             self.compare_manager.cleanup()
@@ -1309,6 +1335,9 @@ class PdfCompareWidget(QWidget):
     
     def _on_compare_result_ready(self, result: dict):
         """Worker 결과를 받아 UI 업데이트 (메인 스레드)"""
+        if getattr(self, '_active_comparison_revision', self.comparison_settings.revision) != self.comparison_settings.revision:
+            return
+        self.mark_comparison_current()
         try:
             # 결과 저장
             self.last_s1_norm = result['s1_norm']
@@ -1483,6 +1512,8 @@ class PdfCompareWidget(QWidget):
     
     def _deferred_full_refresh(self):
         """지연된 전체 갱신"""
+        if getattr(self, '_displayed_comparison_revision', None) != self.comparison_settings.revision:
+            return
         if hasattr(self, 'viewer1') and self.viewer1:
             self.viewer1.refresh_highlights()
         if hasattr(self, 'viewer2') and self.viewer2:
@@ -1532,6 +1563,9 @@ class PdfCompareWidget(QWidget):
         if self.compare_manager:
             self.compare_manager.cancel()
             self.compare_manager.cleanup()
+            self.compare_manager = None
+        self.show_loading(False)
+        self.btn_compare.setEnabled(True)
         
         super().closeEvent(event)
 
@@ -1578,8 +1612,7 @@ class PdfCompareWidget(QWidget):
         
         caution_content = QLabel(
             "<div style='font-size:14px; line-height:1.8;'>"
-            "<div style='margin-bottom:12px;'>• <b>정규화 대조</b>: 한글, 영문, 숫자만 비교 대상</div>"
-            "<div style='margin-bottom:12px;'>• <b>띄어쓰기</b>: 띄어쓰기 오류는 검증되지 않음</div>"
+            + self.comparison_caution_html() +
             "<div style='margin-bottom:12px;'>• <b>표 추출</b>: 셀 단위 드래그를 권장함</div>"
             "<div style='margin-bottom:12px;'>• <b>하이라이트</b>: 결과는 한쪽에만 표시될 수 있음</div>"
             "<div>• <b>정확도</b>: 100% 완벽하지 않을 수 있음, 참고용으로 활용</div>"
@@ -1645,8 +1678,7 @@ class PdfCompareWidget(QWidget):
         
         content = QLabel(
             "<div style='font-size:14px; line-height:1.8;'>"
-            "<div style='margin-bottom:12px;'>• <b>정규화 대조</b>: 한글, 영문, 숫자만 비교 대상</div>"
-            "<div style='margin-bottom:12px;'>• <b>띄어쓰기</b>: 띄어쓰기 오류는 검증되지 않음</div>"
+            + self.comparison_caution_html() +
             "<div style='margin-bottom:12px;'>• <b>표 추출</b>: 셀 단위 드래그를 권장함</div>"
             "<div style='margin-bottom:12px;'>• <b>하이라이트</b>: 결과는 한쪽에만 표시될 수 있음</div>"
             "<div>• <b>정확도</b>: 100% 완벽하지 않을 수 있음, 참고용으로 활용</div>"
@@ -1677,7 +1709,7 @@ class PdfCompareWidget(QWidget):
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle('📋 비교 결과 목록')
+        dialog.setWindowTitle(f'📋 비교 결과 목록 · {self.comparison_settings.options.label}')
         dialog.setFixedSize(700, 500)
         dialog.setStyleSheet(MODERN_QSS)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
@@ -1705,13 +1737,14 @@ class PdfCompareWidget(QWidget):
         from PyQt6.QtWidgets import QListWidget, QListWidgetItem
         list_widget = QListWidget()
         list_widget.setSpacing(5)
+        list_widget.setToolTip('␠: 공백 / ⇥: 탭 / ↵: 줄바꿈 / ⍽: 줄 바꿈 없는 공백')
 
         for i, diff in enumerate(self.diff_list):
             type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
             type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
             pos = diff.get('position', '')
 
-            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}"
+            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {self.display_difference_text(diff['text'])}"
             item = QListWidgetItem(item_text)
             item.setData(1, diff)
             list_widget.addItem(item)
@@ -1784,7 +1817,7 @@ class PdfCompareWidget(QWidget):
             type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
             type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
             pos = diff.get('position', '')
-            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}")
+            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {self.display_difference_text(diff['text'])}")
         text = '\n'.join(lines)
         QApplication.clipboard().setText(text)
         QMessageBox.information(self, '복사 완료', '결과 목록이 클립보드에 복사되었습니다.')

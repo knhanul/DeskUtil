@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, 
  
 from app.common.resources import APP_NAME, COMPANY_NAME, DEVELOPER, RELEASE_DATE, VERSION, get_icon_path, get_logo_path
 from app.common.styles import COLOR_PRIMARY, MODERN_QSS
+from app.common.comparison_settings import ComparisonSettings
 
 
 class MdiMainWindow(QMainWindow):
@@ -35,6 +36,7 @@ class MdiMainWindow(QMainWindow):
         self.current_tool_widget = None
         self.current_tool_key = None
         self.tool_cache = {}  # Cache for tool widgets
+        self.comparison_settings = ComparisonSettings(self)
 
         # Blink animation for legend caution button
         self.blink_timer = QTimer()
@@ -362,7 +364,7 @@ class MdiMainWindow(QMainWindow):
             try:
                 module = importlib.import_module(tool_definition['module_path'])
                 factory_class = getattr(module, tool_definition['class_name'])
-                new_tool = factory_class()
+                new_tool = factory_class(comparison_settings=self.comparison_settings)
                 new_tool.btn_focus_mode.clicked.connect(self.toggle_sidebar)
                 target_key = 'pdf_hf_compare' if tool_key == 'pdf_compare' else 'pdf_compare'
                 target_title = self.get_tool_definition(target_key)['menu_title']

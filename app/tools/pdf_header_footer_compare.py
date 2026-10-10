@@ -14,6 +14,8 @@ from app.common.styles import COLOR_PRIMARY, COLOR_WORKSPACE_DARK, COLOR_P1, COL
 from app.common.pdf_search_helper import PDFSearchHelper
 from app.common.pdf_compare_worker import CompareThreadManager
 from app.common.pdf_text_normalizer import collect_raw_chars, normalize_raw_chars
+from app.common.comparison_options import ComparisonOptions
+from app.common.comparison_settings import ComparisonSettingsMixin
 
 
 class SyncScrollToggle(QCheckBox):
@@ -177,6 +179,7 @@ class HFViewer(QScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.comparison_options = ComparisonOptions()
         self.setObjectName('pdfViewerArea')
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -334,6 +337,7 @@ class HFViewer(QScrollArea):
 
     def set_parent_tool(self, tool):
         self.parent_tool = tool
+        self.comparison_options = tool.comparison_settings.options
 
     # Search methods delegated to helper
     def on_search_text_changed(self, text):
@@ -550,7 +554,8 @@ class HFViewer(QScrollArea):
 
         # Y좌표 기준 라인 그룹핑 (기존 로직 동일)
         # 정규화 + word_id 부여 (기존 로직 동일)
-        self.char_data, self.raw_text = normalize_raw_chars(all_raw_chars, page_aware=True)
+        self.char_data, self.raw_text = normalize_raw_chars(
+            all_raw_chars, page_aware=True, options=self.comparison_options)
 
     def _on_page_return_pressed(self):
         self._on_goto_page()
@@ -666,15 +671,16 @@ class HFViewer(QScrollArea):
 # ──────────────────────────────────────────────────────────
 # HFCompareWidget : 메인 비교 위젯 (MDI에 등록)
 # ──────────────────────────────────────────────────────────
-class HFCompareWidget(QWidget):
+class HFCompareWidget(ComparisonSettingsMixin, QWidget):
     tool_key = 'pdf_hf_compare'
     tool_name = '📄 Header/Footer 제외 비교'
     window_title = 'PDF 출력물 비교'
     singleton = True
     enabled = True
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, comparison_settings=None):
         super().__init__(parent)
+        self.setup_comparison_settings(comparison_settings)
         self._syncing = False
         self.last_s1_norm = ''
         self.last_s2_norm = ''
@@ -818,6 +824,7 @@ class HFCompareWidget(QWidget):
         self.btn_diff_list.setMinimumWidth(100)
         self.btn_diff_list.clicked.connect(self.show_diff_list_dialog)
         bl.addWidget(self.btn_diff_list)
+        self.add_comparison_options_button(bl)
 
         bl.addStretch()
 
@@ -1003,12 +1010,16 @@ class HFCompareWidget(QWidget):
     # ─── 비교 실행 (비동기 QThread 방식) ───
     def start_async_comparison(self):
         """비동기 PDF 비교 시작 (QThread 사용)"""
+        self._active_comparison_revision = self.comparison_settings.revision
         # 1) 텍스트 추출 (메인 스레드에서 먼저 수행 - char_data 준비)
         self.viewer1.extract_body_text()
         self.viewer2.extract_body_text()
         
         if not self.viewer1.char_data and not self.viewer2.char_data:
-            QMessageBox.information(self, '안내', '추출된 텍스트가 없습니다. Header/Footer 제외 범위를 확인해주세요.')
+            message = ('추출된 텍스트가 없습니다. Header/Footer 제외 범위를 확인해주세요.'
+                       if self.comparison_settings.options.mode == 'body'
+                       else '현재 비교 조건과 제외 영역에서 비교할 텍스트가 없습니다.')
+            QMessageBox.information(self, '안내', message)
             return
         
         # 2) 하이라이트 초기화
@@ -1056,6 +1067,9 @@ class HFCompareWidget(QWidget):
     
     def _on_compare_result_ready(self, result: dict):
         """Worker 결과를 받아 UI 업데이트 (메인 스레드)"""
+        if getattr(self, '_active_comparison_revision', self.comparison_settings.revision) != self.comparison_settings.revision:
+            return
+        self.mark_comparison_current()
         try:
             # 결과 저장
             self.last_s1_norm = result['s1_norm']
@@ -1218,6 +1232,8 @@ class HFCompareWidget(QWidget):
     
     def _deferred_full_refresh(self):
         """지연된 전체 갱신"""
+        if getattr(self, '_displayed_comparison_revision', None) != self.comparison_settings.revision:
+            return
         if hasattr(self, 'viewer1') and self.viewer1:
             self.viewer1.reload_pages()
         if hasattr(self, 'viewer2') and self.viewer2:
@@ -1266,6 +1282,8 @@ class HFCompareWidget(QWidget):
         if self.compare_manager:
             self.compare_manager.cancel()
             self.compare_manager.cleanup()
+            self.compare_manager = None
+        self.show_loading(False)
         
         super().closeEvent(event)
 
@@ -1280,6 +1298,7 @@ class HFCompareWidget(QWidget):
 
     def show_loading(self, show: bool, message: str = ""):
         """로딩 오버레이 표시/숨김 및 workspace 활성화/비활성화"""
+        self.comparison_settings.set_busy(self, show)
         if show:
             if message:
                 self.loading_message.setText(message)
@@ -1410,8 +1429,7 @@ class HFCompareWidget(QWidget):
 
         caution_content = QLabel(
             "<div style='font-size:14px; line-height:1.8;'>"
-            "<div style='margin-bottom:12px;'>• <b>정규화 대조</b>: 한글, 영문, 숫자만 비교 대상</div>"
-            "<div style='margin-bottom:12px;'>• <b>띄어쓰기</b>: 띄어쓰기 오류는 검증되지 않음</div>"
+            + self.comparison_caution_html() +
             "<div style='margin-bottom:12px;'>• <b>머릿글/바닥글</b>: 설정된 영역은 비교에서 제외됨</div>"
             "<div style='margin-bottom:12px;'>• <b>하이라이트</b>: 결과는 한쪽에만 표시될 수 있음</div>"
             "<div>• <b>정확도</b>: 100% 완벽하지 않을 수 있음, 참고용으로 활용</div>"
@@ -1437,7 +1455,7 @@ class HFCompareWidget(QWidget):
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle('📋 비교 결과 목록')
+        dialog.setWindowTitle(f'📋 비교 결과 목록 · {self.comparison_settings.options.label}')
         dialog.setFixedSize(700, 500)
         dialog.setStyleSheet(MODERN_QSS)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
@@ -1465,13 +1483,14 @@ class HFCompareWidget(QWidget):
         from PyQt6.QtWidgets import QListWidget, QListWidgetItem
         list_widget = QListWidget()
         list_widget.setSpacing(5)
+        list_widget.setToolTip('␠: 공백 / ⇥: 탭 / ↵: 줄바꿈 / ⍽: 줄 바꿈 없는 공백')
 
         for i, diff in enumerate(self.diff_list):
             type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
             type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
             pos = diff.get('position', '')
 
-            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}"
+            item_text = f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {self.display_difference_text(diff['text'])}"
             item = QListWidgetItem(item_text)
             item.setData(1, diff)  # diff 데이터 저장
             list_widget.addItem(item)
@@ -1546,7 +1565,7 @@ class HFCompareWidget(QWidget):
             type_icon = {'delete': '❌', 'insert': '➕', 'replace': '🔄'}.get(diff['type'], '•')
             type_text = {'delete': '삭제', 'insert': '추가', 'replace': '변경'}.get(diff['type'], '•')
             pos = diff.get('position', '')
-            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {diff['text']}")
+            lines.append(f"{type_icon} [{diff['pdf']}] 페이지 {diff['page']} {pos} - {type_text}: {self.display_difference_text(diff['text'])}")
         text = '\n'.join(lines)
         QApplication.clipboard().setText(text)
         QMessageBox.information(self, '복사 완료', '결과 목록이 클립보드에 복사되었습니다.')
